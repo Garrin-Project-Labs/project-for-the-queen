@@ -1,0 +1,7 @@
+directory:
+  listed: true
+  title: "For the Queen"
+  description: "Public game project workspace with a live browser demo."
+  tags: [game, demo]
+  status: "live"
+  sortOrder: 1000
