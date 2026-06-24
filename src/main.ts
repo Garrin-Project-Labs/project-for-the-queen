@@ -515,10 +515,7 @@ class GameScene extends Phaser.Scene {
     this.layer.add(text(this, 198, 292, this.lastRoll || this.encounterPreview(tile), 14, '#cbb783').setWordWrapWidth(860));
 
     if (tile.encounter === 'shop') {
-      this.drawEncounterOption(198, 366, 208, 106, 'Buy Herb', '12g · Restore HP during combat. Safe, boring, useful.', () => this.buyHerb(), true, this.run.gold < 12);
-      this.drawEncounterOption(426, 366, 208, 106, 'Buy Bomb', '16g · Direct combat damage. Great for armor or bosses.', () => this.buyBomb(), false, this.run.gold < 16);
-      this.drawEncounterOption(654, 366, 208, 106, 'Buy Armor', '24g · Permanent +1 armor this run.', () => this.buyArmor(), false, this.run.gold < 24);
-      this.drawEncounterOption(882, 366, 178, 106, 'Leave', 'Save gold and keep moving.', () => this.resolveEncounter('You leave the merchant camp.'));
+      this.drawMarketMenu();
     } else if (tile.encounter === 'shrine') {
       this.drawEncounterOption(252, 382, 240, 116, 'Rest', 'Guaranteed +8 HP. Resolves the shrine.', () => this.restShrine(), true);
       this.drawEncounterOption(522, 382, 240, 116, 'Pray', `${Math.round(this.hero.stats.luck)}% luck roll. Success: focus + danger relief. Failure: danger rises.`, () => this.prayShrine());
@@ -533,6 +530,42 @@ class GameScene extends Phaser.Scene {
       this.drawEncounterOption(766, 382, 240, 116, 'Set Trap', 'Spend 1 bomb to open combat with 10 direct damage.', () => this.setTrapAmbush(), false, this.run.bombs <= 0);
     }
     this.drawCompactHeroPanel(808, 536);
+  }
+
+  private drawMarketMenu() {
+    if (!this.hero || !this.run) return;
+    const rows = [
+      { stock: 3, icon: '+', item: 'Godsbeard Herb', cost: 12, desc: 'Restore HP in combat.', action: () => this.buyHerb(), disabled: this.run.gold < 12 },
+      { stock: 2, icon: '*', item: 'Powder Bomb', cost: 16, desc: 'Deal direct combat damage.', action: () => this.buyBomb(), disabled: this.run.gold < 16 },
+      { stock: 1, icon: 'A', item: 'Reinforced Plates', cost: 24, desc: 'Permanent +1 armor this run.', action: () => this.buyArmor(), disabled: this.run.gold < 24 },
+      { stock: 1, icon: 'S', item: 'Scout Rations', cost: 10, desc: 'Refresh 1 movement immediately.', action: () => this.buyMovement(), disabled: this.run.gold < 10 },
+      { stock: 1, icon: 'L', item: 'Lucky Charm', cost: 18, desc: '+4 weapon accuracy.', action: () => this.buyAccuracy(), disabled: this.run.gold < 18 },
+    ];
+    const x = 238;
+    const y = 316;
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x171719, 0.98).fillRoundedRect(x, y, 804, 236, 8);
+    g.lineStyle(2, 0x4f4f4f, 0.9).strokeRoundedRect(x, y, 804, 236, 8);
+    g.fillStyle(0x08090b, 1).fillRoundedRect(x + 18, y + 18, 768, 34, 4);
+    this.layer.add(text(this, x + 42, y + 26, 'Stock', 15, '#f4eee5'));
+    this.layer.add(text(this, x + 190, y + 26, 'Item', 15, '#f4eee5'));
+    this.layer.add(text(this, x + 670, y + 26, 'Cost', 15, '#f4eee5'));
+    rows.forEach((row, i) => {
+      const yy = y + 62 + i * 32;
+      const highlight = i === 0;
+      g.fillStyle(row.disabled ? 0x343434 : highlight ? 0xb8964d : 0x565656, row.disabled ? 0.72 : 0.95).fillRoundedRect(x + 18, yy, 768, 28, 4);
+      this.layer.add(text(this, x + 64, yy + 5, `${row.stock}`, 15, row.disabled ? '#888' : '#202020'));
+      this.layer.add(text(this, x + 132, yy + 4, row.icon, 18, row.disabled ? '#888' : '#27313a'));
+      this.layer.add(text(this, x + 190, yy + 5, row.item, 15, row.disabled ? '#999' : '#222'));
+      this.layer.add(text(this, x + 392, yy + 7, row.desc, 11, row.disabled ? '#888' : '#333'));
+      this.layer.add(text(this, x + 682, yy + 5, `${row.cost}`, 15, row.disabled ? '#999' : '#222'));
+      const zone = this.add.zone(x + 18, yy, 768, 28).setOrigin(0).setInteractive({ useHandCursor: !row.disabled });
+      if (!row.disabled) zone.on('pointerdown', row.action);
+      this.layer.add(zone);
+    });
+    this.layer.add(text(this, x + 22, y + 214, `Gold: ${this.run.gold}`, 16, '#f2d58a'));
+    this.drawButton(x + 640, y + 202, 146, 34, 'Leave', () => this.resolveEncounter('You leave the market.'));
   }
 
   private drawEncounterOption(x: number, y: number, w: number, h: number, title: string, description: string, onClick: () => void, primary = false, disabled = false) {
@@ -583,29 +616,27 @@ class GameScene extends Phaser.Scene {
 
   private drawIsoTile(tile: BoardTile) {
     const p = this.boardPoint(tile.q, tile.r);
-    const palette = terrainPalette[tile.terrain];
     const g = this.add.graphics();
     this.layer.add(g);
     const points = hexPoints(p.x, p.y, 54, 32);
     const reachable = this.hero ? this.isReachable(tile) : false;
     const occupied = !!this.hero && tile.q === this.hero.x && tile.r === this.hero.y;
     const h = hashCoord(tile.q, tile.r);
-    const base = this.terrainBoardColor(tile.terrain, h);
-    const border = reachable ? theme.brightGold : occupied ? 0xffffff : tile.encounter !== 'none' && !tile.resolved ? this.poiColor(tile.encounter) : 0xc79a4c;
+    const base = this.simpleTileColor(tile, h);
 
     g.fillStyle(0x12090a, 0.55).fillPoints(hexPoints(p.x + 4, p.y + 7, 54, 32), true);
-    g.fillStyle(base, tile.resolved ? 0.72 : 0.96).fillPoints(points, true);
-    g.lineStyle(reachable ? 4 : occupied ? 3 : 1.5, border, reachable || occupied ? 1 : 0.75).strokePoints(points, true);
+    g.fillStyle(base, tile.resolved ? 0.72 : 0.98).fillPoints(points, true);
+    g.lineStyle(2, this.simpleTileBorder(tile), tile.resolved ? 0.72 : 1).strokePoints(points, true);
 
     if (reachable) {
-      g.fillStyle(theme.brightGold, 0.18).fillPoints(points, true);
-      g.lineStyle(2, 0xffffff, 0.78).strokePoints(hexPoints(p.x, p.y, 42, 24), true);
+      g.lineStyle(5, 0xffffff, 0.92).strokePoints(hexPoints(p.x, p.y, 58, 36), true);
+      g.lineStyle(2, theme.brightGold, 0.95).strokePoints(hexPoints(p.x, p.y, 44, 26), true);
     }
-    if (!tile.resolved && tile.encounter === 'ambush') g.lineStyle(2, 0x9b1018, 0.72).strokePoints(hexPoints(p.x, p.y, 45, 26), true);
-    if (!tile.resolved && tile.encounter === 'skill') this.layer.add(text(this, p.x, p.y - 8, '?', 20, '#e6c46f').setOrigin(0.5).setShadow(1, 1, '#24100c', 2));
+    if (occupied) g.lineStyle(5, 0xffffff, 1).strokePoints(hexPoints(p.x, p.y, 64, 40), true);
 
+    if (tile.encounter === 'skill' && !tile.resolved) this.layer.add(text(this, p.x, p.y - 11, '?', 23, '#3f351e').setOrigin(0.5));
+    if (tile.encounter === 'shrine' && !tile.resolved) this.layer.add(text(this, p.x, p.y - 14, '+', 24, '#15381f').setOrigin(0.5));
     this.drawTerrainDoodads(tile, p.x, p.y, h);
-    if (tile.label && tile.encounter !== 'boss') this.drawLocationLabel(tile, p.x, p.y + 34);
     const hit = this.add.zone(p.x, p.y, TILE_W, TILE_H).setOrigin(0.5).setInteractive({ useHandCursor: reachable });
     hit.on('pointerdown', () => this.moveTo(tile));
     this.layer.add(hit);
@@ -626,7 +657,7 @@ class GameScene extends Phaser.Scene {
   }
 
   private drawBoardEvents() {
-    this.tiles.filter((tile) => tile.encounter !== 'none' && !tile.resolved).forEach((tile) => {
+    this.tiles.filter((tile) => !tile.resolved && (tile.encounter === 'ambush' || tile.encounter === 'boss')).forEach((tile) => {
       const p = this.boardPoint(tile.q, tile.r);
       this.drawPoiMarker(tile, p.x, p.y);
     });
@@ -686,6 +717,24 @@ class GameScene extends Phaser.Scene {
       this.layer.add(text(this, xx + 20, y + 22, label, 12, theme.muted));
     });
     this.layer.add(text(this, x + 598, y + 14, 'Gold outlines = reachable. New tiles appear as you travel.', 12, '#cbb783').setWordWrapWidth(206));
+  }
+
+  private simpleTileColor(tile: BoardTile, h: number) {
+    if (!tile.resolved) {
+      if (tile.encounter === 'shop') return 0x2f8f52;
+      if (tile.encounter === 'ambush' || tile.encounter === 'boss') return 0xb83a32;
+      if (tile.encounter === 'shrine' || tile.encounter === 'skill') return 0xcaa34a;
+    }
+    return this.terrainBoardColor(tile.terrain, h);
+  }
+
+  private simpleTileBorder(tile: BoardTile) {
+    if (!tile.resolved) {
+      if (tile.encounter === 'shop') return 0x90e8a1;
+      if (tile.encounter === 'ambush' || tile.encounter === 'boss') return 0xff7770;
+      if (tile.encounter === 'shrine' || tile.encounter === 'skill') return 0xffdb73;
+    }
+    return 0xc79a4c;
   }
 
   private terrainBoardColor(terrain: Terrain, h: number) {
@@ -758,24 +807,12 @@ class GameScene extends Phaser.Scene {
   }
 
   private drawPoiMarker(tile: BoardTile, x: number, y: number) {
-    const color = this.poiColor(tile.encounter);
     const g = this.add.graphics();
     this.layer.add(g);
-    if (tile.encounter === 'ambush' || tile.encounter === 'boss') {
-      g.fillStyle(0x2b0b0d, 0.72).fillCircle(x, y - 22, tile.encounter === 'boss' ? 18 : 13);
-      g.lineStyle(3, color, 0.9).strokeCircle(x, y - 22, tile.encounter === 'boss' ? 20 : 15);
-      this.layer.add(text(this, x, y - 34, tile.encounter === 'boss' ? '⚔' : '!', tile.encounter === 'boss' ? 22 : 18, '#ffb1a9').setOrigin(0.5).setShadow(1, 1, '#000', 2));
-    } else if (tile.encounter === 'shop') {
-      g.fillStyle(0xf0e3ca, 1).fillRoundedRect(x - 22, y - 42, 44, 30, 6);
-      g.fillStyle(0xc94c4c, 1).fillRect(x - 24, y - 42, 48, 10);
-      g.lineStyle(2, color, 0.9).strokeRoundedRect(x - 22, y - 42, 44, 30, 6);
-      this.layer.add(text(this, x, y - 37, '$', 14, '#1b1820').setOrigin(0.5));
-    } else if (tile.encounter === 'shrine') {
-      g.fillStyle(0x4edb76, 0.28).fillCircle(x, y - 22, 26);
-      g.fillStyle(0x102415, 0.9).fillCircle(x, y - 22, 15);
-      this.layer.add(text(this, x, y - 33, '+', 22, '#9cffb4').setOrigin(0.5).setShadow(1, 1, '#000', 2));
-    }
-    if (tile.encounter === 'boss' && tile.label) this.layer.add(text(this, x - 48, y - 64, tile.label, 11, '#ffd7a3').setShadow(1, 1, '#000', 2));
+    const boss = tile.encounter === 'boss';
+    g.fillStyle(0x2b0b0d, 0.86).fillCircle(x, y - 22, boss ? 18 : 14);
+    g.lineStyle(3, 0xd44141, 0.95).strokeCircle(x, y - 22, boss ? 21 : 17);
+    this.layer.add(text(this, x, y - (boss ? 36 : 34), boss ? '⚔' : '!', boss ? 22 : 18, '#ffd0ca').setOrigin(0.5).setShadow(1, 1, '#000', 2));
   }
 
   private drawPoiGlyph(kind: EncounterKind, x: number, y: number, scale: number) {
@@ -1017,6 +1054,20 @@ class GameScene extends Phaser.Scene {
     this.run.gold -= 24;
     this.hero.equipment.armorBonus += 1;
     this.resolveEncounter('Bought reinforced plates. Armor increased by 1.');
+  }
+
+  private buyMovement() {
+    if (!this.run || this.run.gold < 10) return;
+    this.run.gold -= 10;
+    this.run.movesLeft += 1;
+    this.resolveEncounter('Bought scout rations. Movement +1.');
+  }
+
+  private buyAccuracy() {
+    if (!this.hero || !this.run || this.run.gold < 18) return;
+    this.run.gold -= 18;
+    this.hero.equipment.accuracy += 4;
+    this.resolveEncounter('Bought a lucky charm. Accuracy +4%.');
   }
 
   private restShrine() {
@@ -1271,9 +1322,9 @@ class GameScene extends Phaser.Scene {
   }
 
   private revealAround(q: number, r: number) {
-    for (let dq = -1; dq <= 1; dq++) {
-      for (let dr = -1; dr <= 1; dr++) {
-        if (Math.abs(dq - dr) > 1) continue;
+    for (let dq = -2; dq <= 2; dq++) {
+      for (let dr = -2; dr <= 2; dr++) {
+        if (Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq - dr)) > 2) continue;
         this.ensureTile(q + dq, r + dr);
       }
     }
