@@ -223,6 +223,8 @@ class GameScene extends Phaser.Scene {
   private combatLog: string[] = [];
   private lastRoll = '';
   private boardNotice = 'Reachable tiles glow gold. Click a neighboring tile to spend movement.';
+  private isMoving = false;
+  private heroToken?: Phaser.GameObjects.Container;
 
   constructor() {
     super('GameScene');
@@ -242,6 +244,7 @@ class GameScene extends Phaser.Scene {
   }
 
   private render() {
+    this.heroToken = undefined;
     this.layer.removeAll(true);
     this.drawBackground();
     if (this.screen === 'menu') this.drawMainMenu();
@@ -443,13 +446,16 @@ class GameScene extends Phaser.Scene {
 
   private drawHeroToken(hero: PlayerHero) {
     const p = boardPoint(hero.x, hero.y);
+    const token = this.add.container(p.x, p.y);
     const g = this.add.graphics();
-    this.layer.add(g);
-    g.fillStyle(0x000000, 0.45).fillEllipse(p.x, p.y - 2, 48, 16);
-    g.fillStyle(hero.color, 1).fillCircle(p.x, p.y - 44, 22);
-    g.lineStyle(4, theme.brightGold, 1).strokeCircle(p.x, p.y - 44, 22);
-    g.lineStyle(1, 0xffffff, 0.75).strokeCircle(p.x, p.y - 44, 15);
-    this.layer.add(text(this, p.x - 36, p.y - 88, hero.name, 12, '#f9f3df').setShadow(1, 1, '#000', 2));
+    g.fillStyle(0x000000, 0.45).fillEllipse(0, -2, 48, 16);
+    g.fillStyle(hero.color, 1).fillCircle(0, -44, 22);
+    g.lineStyle(4, theme.brightGold, 1).strokeCircle(0, -44, 22);
+    g.lineStyle(1, 0xffffff, 0.75).strokeCircle(0, -44, 15);
+    const label = text(this, -36, -88, hero.name, 12, '#f9f3df').setShadow(1, 1, '#000', 2);
+    token.add([g, label]);
+    this.heroToken = token;
+    this.layer.add(token);
   }
 
   private drawRunPanel(x: number, y: number) {
@@ -500,16 +506,21 @@ class GameScene extends Phaser.Scene {
   }
 
   private drawPoiMarker(tile: BoardTile, x: number, y: number) {
-    const offset = this.poiOffset(tile.encounter);
+    const offset = this.poiOffset(tile);
     const px = x + offset.x;
     const py = y + offset.y;
     const color = this.poiColor(tile.encounter);
     const g = this.add.graphics();
     this.layer.add(g);
-    g.lineStyle(2, color, 0.55).lineBetween(x, y - 28, px, py + 12);
-    g.fillStyle(0x07090f, 0.94).fillRoundedRect(px - 18, py - 18, 36, 36, 10);
-    g.lineStyle(2, color, 1).strokeRoundedRect(px - 18, py - 18, 36, 36, 10);
-    this.drawPoiGlyph(tile.encounter, px, py, 1);
+    g.lineStyle(2, color, 0.5).lineBetween(x, y - 30, px, py + 18);
+    const label = this.poiLabel(tile.encounter);
+    const w = tile.encounter === 'boss' ? 112 : 92;
+    g.fillStyle(0x05070d, 0.96).fillRoundedRect(px - w / 2, py - 20, w, 40, 12);
+    g.lineStyle(2, color, 1).strokeRoundedRect(px - w / 2, py - 20, w, 40, 12);
+    g.fillStyle(color, 0.18).fillRoundedRect(px - w / 2 + 3, py - 17, w - 6, 34, 10);
+    this.drawPoiGlyph(tile.encounter, px - w / 2 + 18, py + 2, 0.95);
+    this.layer.add(text(this, px - w / 2 + 34, py - 8, label, 12, '#f7efd9').setShadow(1, 1, '#000', 2));
+    if (tile.label && tile.encounter === 'boss') this.layer.add(text(this, px - w / 2 + 34, py + 6, tile.label, 9, '#cbb783').setShadow(1, 1, '#000', 2));
   }
 
   private drawPoiGlyph(kind: EncounterKind, x: number, y: number, scale: number) {
@@ -518,12 +529,22 @@ class GameScene extends Phaser.Scene {
     this.layer.add(text(this, x, y - 9 * scale, glyph, Math.round(18 * scale), numberToHex(color)).setOrigin(0.5));
   }
 
-  private poiOffset(kind: EncounterKind) {
-    if (kind === 'shop') return { x: -58, y: -64 };
-    if (kind === 'shrine') return { x: -44, y: -58 };
-    if (kind === 'skill') return { x: 0, y: -72 };
-    if (kind === 'boss') return { x: 58, y: -70 };
-    return { x: 46, y: -60 };
+  private poiOffset(tile: BoardTile) {
+    if (tile.encounter === 'shop') return { x: -92, y: -92 };
+    if (tile.encounter === 'shrine') return { x: -96, y: -86 };
+    if (tile.encounter === 'boss') return { x: 118, y: -92 };
+    if (tile.encounter === 'skill') {
+      if (tile.q === 3 && tile.r === 0) return { x: 108, y: -96 };
+      if (tile.q === 4 && tile.r === 2) return { x: 116, y: -54 };
+      return { x: 4, y: -112 };
+    }
+    if (tile.q <= 2) return { x: -112, y: -72 };
+    if (tile.r >= 2) return { x: -112, y: -70 };
+    return { x: 108, y: -78 };
+  }
+
+  private poiLabel(kind: EncounterKind) {
+    return kind === 'shop' ? 'SHOP' : kind === 'shrine' ? 'SHRINE' : kind === 'skill' ? 'CHECK' : kind === 'boss' ? 'BOSS' : 'AMBUSH';
   }
 
   private poiColor(kind: EncounterKind) {
@@ -622,18 +643,53 @@ class GameScene extends Phaser.Scene {
   }
 
   private moveTo(tile: BoardTile) {
-    if (!this.hero || !this.run) return;
+    if (!this.hero || !this.run || this.isMoving) return;
     const cost = terrainPalette[tile.terrain].moveCost;
     if (!this.isReachable(tile)) {
       this.boardNotice = tile.q === this.hero.x && tile.r === this.hero.y ? 'You are already standing here.' : this.run.movesLeft <= 0 ? 'No movement left. End the turn to refresh movement.' : 'That tile is out of reach this turn. Gold outlines show valid moves.';
       this.render();
       return;
     }
+
+    const from = boardPoint(this.hero.x, this.hero.y);
+    const to = boardPoint(tile.q, tile.r);
+    this.run.movesLeft -= cost;
+    this.boardNotice = `Travelling to ${tile.label ?? tile.terrain}...`;
+    this.addLog(`Moved to ${tile.label ?? tile.terrain} (-${cost} move).`);
+    this.isMoving = true;
+    this.screen = 'board';
+    this.render();
+    this.drawMovementTrail(from, to);
+
+    const token = this.heroToken;
+    if (!token) {
+      this.finishMove(tile);
+      return;
+    }
+    this.tweens.add({
+      targets: token,
+      x: to.x,
+      y: to.y,
+      duration: 420,
+      ease: 'Sine.easeInOut',
+      onComplete: () => this.finishMove(tile),
+    });
+  }
+
+  private drawMovementTrail(from: { x: number; y: number }, to: { x: number; y: number }) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.lineStyle(5, 0xffffff, 0.75).lineBetween(from.x, from.y - 44, to.x, to.y - 44);
+    g.lineStyle(2, theme.brightGold, 0.95).lineBetween(from.x, from.y - 44, to.x, to.y - 44);
+    this.tweens.add({ targets: g, alpha: 0, duration: 520, ease: 'Sine.easeOut', onComplete: () => g.destroy() });
+  }
+
+  private finishMove(tile: BoardTile) {
+    if (!this.hero || !this.run) return;
     this.hero.x = tile.q;
     this.hero.y = tile.r;
-    this.run.movesLeft -= cost;
-    this.boardNotice = `Moved to ${tile.label ?? tile.terrain}. ${this.run.movesLeft} movement remaining.`;
-    this.addLog(`Moved to ${tile.label ?? tile.terrain} (-${cost} move).`);
+    this.isMoving = false;
+    this.boardNotice = `Arrived at ${tile.label ?? tile.terrain}. ${this.run.movesLeft} movement remaining.`;
     if (tile.encounter !== 'none' && !tile.resolved) {
       this.activeTile = tile;
       this.lastRoll = '';
