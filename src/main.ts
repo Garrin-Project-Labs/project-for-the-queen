@@ -64,9 +64,9 @@ type RunState = {
 
 const WIDTH = 1280;
 const HEIGHT = 760;
-const TILE_W = 94;
-const TILE_H = 48;
-const BOARD_ORIGIN = { x: 380, y: 190 };
+const TILE_W = 146;
+const TILE_H = 74;
+const BOARD_ORIGIN = { x: 610, y: 162 };
 const COMBAT_ORIGIN = { x: 555, y: 268 };
 const START = { x: 0, y: 0 };
 
@@ -222,6 +222,7 @@ class GameScene extends Phaser.Scene {
   private enemy?: Enemy;
   private combatLog: string[] = [];
   private lastRoll = '';
+  private boardNotice = 'Reachable tiles glow gold. Click a neighboring tile to spend movement.';
 
   constructor() {
     super('GameScene');
@@ -327,12 +328,12 @@ class GameScene extends Phaser.Scene {
 
   private drawBoardScreen() {
     if (!this.hero || !this.run) this.createRun(false);
-    this.layer.add(text(this, 52, 44, 'Expedition Board', 36, '#f2d58a', 'Georgia, serif'));
-    this.layer.add(text(this, 54, 88, 'Spend movement, choose routes, trigger encounters, then end the turn when stuck or safe.', 14, theme.muted));
-    this.drawBoardMap(48, 118);
-    this.drawRunPanel(914, 86);
-    this.drawButton(914, 632, 292, 42, 'End Turn (E)', () => this.endTurn());
-    this.drawButton(914, 684, 292, 36, 'Back to Menu', () => {
+    this.drawBoardMap(34, 82);
+    this.drawBoardHeader();
+    this.drawRunPanel(920, 104);
+    this.drawBoardLegend(44, 626);
+    this.drawButton(920, 624, 146, 40, 'End Turn (E)', () => this.endTurn());
+    this.drawButton(1080, 624, 146, 40, 'Menu', () => {
       this.screen = 'menu';
       this.render();
     });
@@ -387,33 +388,40 @@ class GameScene extends Phaser.Scene {
   private drawBoardMap(x: number, y: number) {
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x101521, 0.96).fillRoundedRect(x, y, 800, 472, 18);
-    g.lineStyle(1, theme.gold, 0.38).strokeRoundedRect(x, y, 800, 472, 18);
-    g.fillStyle(0x000000, 0.36).fillEllipse(x + 390, y + 296, 650, 200);
-    this.tiles.forEach((tile) => this.drawIsoTile(tile));
+    g.fillStyle(0x0d131f, 0.98).fillRoundedRect(x, y, 1212, 614, 20);
+    g.lineStyle(1, theme.gold, 0.42).strokeRoundedRect(x, y, 1212, 614, 20);
+    g.fillStyle(0x05070d, 0.48).fillEllipse(622, 494, 940, 250);
+    g.fillStyle(0x111b2b, 0.48).fillEllipse(610, 358, 760, 230);
     this.drawBoardPath();
+    this.tiles.forEach((tile) => this.drawIsoTile(tile));
     this.drawBoardEvents();
     if (this.hero) this.drawHeroToken(this.hero);
   }
 
   private drawIsoTile(tile: BoardTile) {
-    const p = iso(tile.q, tile.r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
+    const p = boardPoint(tile.q, tile.r);
     const palette = terrainPalette[tile.terrain];
     const g = this.add.graphics();
     this.layer.add(g);
     const points = diamond(p.x, p.y);
     const reachable = this.hero ? this.isReachable(tile) : false;
-    g.fillStyle(palette.side, 1).fillPoints([
+    const occupied = !!this.hero && tile.q === this.hero.x && tile.r === this.hero.y;
+    const dim = !reachable && !occupied && this.run?.movesLeft === 0;
+    g.fillStyle(palette.side, dim ? 0.55 : 1).fillPoints([
       new Phaser.Math.Vector2(points[1].x, points[1].y),
       new Phaser.Math.Vector2(points[2].x, points[2].y),
-      new Phaser.Math.Vector2(points[2].x, points[2].y + 18),
-      new Phaser.Math.Vector2(points[1].x, points[1].y + 18),
+      new Phaser.Math.Vector2(points[2].x, points[2].y + 24),
+      new Phaser.Math.Vector2(points[1].x, points[1].y + 24),
     ], true);
-    g.fillStyle(palette.top, tile.resolved ? 0.68 : 1).fillPoints(points, true);
-    g.lineStyle(reachable ? 3 : 2, reachable ? theme.brightGold : palette.stroke, reachable ? 1 : 0.9).strokePoints(points, true);
-    this.layer.add(text(this, p.x - 6, p.y - 17, palette.icon, 20, '#10131a'));
-    if (tile.label) this.layer.add(text(this, p.x - 44, p.y + 22, tile.label, 12, '#f5e7c0').setShadow(1, 1, '#000', 2));
-    const hit = this.add.zone(p.x, p.y, TILE_W, TILE_H).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    g.fillStyle(palette.top, tile.resolved ? 0.58 : dim ? 0.5 : 1).fillPoints(points, true);
+    g.lineStyle(reachable ? 4 : occupied ? 3 : 2, reachable ? theme.brightGold : occupied ? 0xffffff : palette.stroke, reachable || occupied ? 1 : 0.82).strokePoints(points, true);
+    if (reachable) {
+      g.fillStyle(theme.brightGold, 0.16).fillPoints(points, true);
+      g.fillStyle(theme.brightGold, 1).fillCircle(p.x, p.y + 7, 4);
+    }
+    this.layer.add(text(this, p.x - 8, p.y - 25, palette.icon, 24, '#10131a'));
+    if (tile.label) this.drawLocationLabel(tile, p.x, p.y + 46);
+    const hit = this.add.zone(p.x, p.y, TILE_W, TILE_H).setOrigin(0.5).setInteractive({ useHandCursor: reachable });
     hit.on('pointerdown', () => this.moveTo(tile));
     this.layer.add(hit);
   }
@@ -421,53 +429,105 @@ class GameScene extends Phaser.Scene {
   private drawBoardPath() {
     const g = this.add.graphics();
     this.layer.add(g);
-    g.lineStyle(4, theme.gold, 0.36);
-    const route = [
-      iso(0, 0, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52), iso(1, 1, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
-      iso(2, 2, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52), iso(3, 3, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
-      iso(4, 3, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
-    ];
+    g.lineStyle(5, theme.gold, 0.3);
+    const route = [boardPoint(0, 0), boardPoint(1, 1), boardPoint(2, 2), boardPoint(3, 3), boardPoint(4, 3)];
     for (let i = 0; i < route.length - 1; i++) g.lineBetween(route[i].x, route[i].y, route[i + 1].x, route[i + 1].y);
   }
 
   private drawBoardEvents() {
     this.tiles.filter((tile) => tile.encounter !== 'none' && !tile.resolved).forEach((tile) => {
-      const p = iso(tile.q, tile.r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
-      const color = tile.encounter === 'shop' ? theme.blue : tile.encounter === 'shrine' ? theme.green : tile.encounter === 'skill' ? theme.gold : theme.red;
-      const g = this.add.graphics();
-      this.layer.add(g);
-      g.fillStyle(0x07090f, 0.92).fillRoundedRect(p.x - 45, p.y - 60, 90, 22, 9);
-      g.lineStyle(1, color, 1).strokeRoundedRect(p.x - 45, p.y - 60, 90, 22, 9);
-      g.fillStyle(color, 1).fillCircle(p.x - 32, p.y - 49, 4);
-      this.layer.add(text(this, p.x - 22, p.y - 56, tile.encounter, 11, '#edf2ff'));
+      const p = boardPoint(tile.q, tile.r);
+      this.drawPoiMarker(tile, p.x, p.y);
     });
   }
 
   private drawHeroToken(hero: PlayerHero) {
-    const p = iso(hero.x, hero.y, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
+    const p = boardPoint(hero.x, hero.y);
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x000000, 0.42).fillEllipse(p.x, p.y - 6, 34, 12);
-    g.fillStyle(hero.color, 1).fillCircle(p.x, p.y - 32, 16);
-    g.lineStyle(2, theme.brightGold, 1).strokeCircle(p.x, p.y - 32, 16);
-    this.layer.add(text(this, p.x - 28, p.y - 68, hero.name.slice(0, 4), 11, '#f9f3df').setShadow(1, 1, '#000', 2));
+    g.fillStyle(0x000000, 0.45).fillEllipse(p.x, p.y - 2, 48, 16);
+    g.fillStyle(hero.color, 1).fillCircle(p.x, p.y - 44, 22);
+    g.lineStyle(4, theme.brightGold, 1).strokeCircle(p.x, p.y - 44, 22);
+    g.lineStyle(1, 0xffffff, 0.75).strokeCircle(p.x, p.y - 44, 15);
+    this.layer.add(text(this, p.x - 36, p.y - 88, hero.name, 12, '#f9f3df').setShadow(1, 1, '#000', 2));
   }
 
   private drawRunPanel(x: number, y: number) {
     if (!this.hero || !this.run) return;
-    this.drawPanel(x, y, 292, 518, 'Run State');
-    this.layer.add(text(this, x + 24, y + 62, `Day ${this.run.day} · Turn ${this.run.turn}`, 16, theme.ink));
-    this.layer.add(text(this, x + 24, y + 92, `Moves left: ${this.run.movesLeft}`, 15, '#f2d58a'));
+    this.drawPanel(x, y, 306, 214, 'Run State');
+    this.layer.add(text(this, x + 24, y + 62, `Day ${this.run.day} · Turn ${this.run.turn} · Moves ${this.run.movesLeft}`, 15, theme.ink));
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x06080d, 1).fillRoundedRect(x + 24, y + 134, 244, 18, 9);
-    g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 134, Math.min(244, this.run.pressure * 24.4), 18, 9);
-    this.layer.add(text(this, x + 24, y + 162, `Pressure ${this.run.pressure}/10`, 12, theme.muted));
-    this.layer.add(text(this, x + 24, y + 204, this.hero.name, 20, theme.ink, 'Georgia, serif'));
-    this.layer.add(text(this, x + 24, y + 236, `HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.hero.armor} · Focus ${this.hero.focus}`, 13, '#d5c185'));
-    this.layer.add(text(this, x + 24, y + 266, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Score ${this.run.score}`, 13, theme.muted));
-    this.layer.add(text(this, x + 24, y + 318, 'Log', 12, '#d5c185'));
-    this.run.log.slice(-5).forEach((line, i) => this.layer.add(text(this, x + 24, y + 344 + i * 26, `• ${line}`, 11, '#9eaac7').setWordWrapWidth(238)));
+    g.fillStyle(0x06080d, 1).fillRoundedRect(x + 24, y + 96, 250, 16, 8);
+    g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 96, Math.min(250, this.run.pressure * 25), 16, 8);
+    this.layer.add(text(this, x + 24, y + 120, `Pressure ${this.run.pressure}/10`, 11, theme.muted));
+    this.layer.add(text(this, x + 24, y + 148, `${this.hero.name} · HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.hero.armor}`, 13, '#d5c185'));
+    this.layer.add(text(this, x + 24, y + 174, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Score ${this.run.score}`, 12, theme.muted));
+  }
+
+  private drawBoardHeader() {
+    if (!this.run) return;
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x080b12, 0.78).fillRoundedRect(44, 38, 1182, 46, 14);
+    g.lineStyle(1, theme.gold, 0.28).strokeRoundedRect(44, 38, 1182, 46, 14);
+    this.layer.add(text(this, 66, 47, 'Expedition Board', 28, '#f2d58a', 'Georgia, serif'));
+    this.layer.add(text(this, 330, 55, this.boardNotice, 14, theme.muted).setWordWrapWidth(560));
+  }
+
+  private drawBoardLegend(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x080b12, 0.82).fillRoundedRect(x, y, 832, 58, 14);
+    g.lineStyle(1, theme.gold, 0.28).strokeRoundedRect(x, y, 832, 58, 14);
+    const items: [EncounterKind, string][] = [['shop', 'Shop'], ['shrine', 'Shrine'], ['skill', 'Check'], ['ambush', 'Ambush'], ['boss', 'Boss']];
+    items.forEach(([kind, label], i) => {
+      const xx = x + 22 + i * 112;
+      this.drawPoiGlyph(kind, xx, y + 30, 0.8);
+      this.layer.add(text(this, xx + 20, y + 22, label, 12, theme.muted));
+    });
+    this.layer.add(text(this, x + 598, y + 14, 'Gold outlines = reachable now. Terrain costs 1-2 movement.', 12, '#cbb783').setWordWrapWidth(206));
+  }
+
+  private drawLocationLabel(tile: BoardTile, x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    const label = tile.label ?? '';
+    const w = Math.max(54, label.length * 7 + 18);
+    g.fillStyle(0x06080d, 0.72).fillRoundedRect(x - w / 2, y, w, 20, 8);
+    g.lineStyle(1, 0x2c3347, 0.9).strokeRoundedRect(x - w / 2, y, w, 20, 8);
+    this.layer.add(text(this, x, y + 4, label, 11, '#f5e7c0').setOrigin(0.5, 0));
+  }
+
+  private drawPoiMarker(tile: BoardTile, x: number, y: number) {
+    const offset = this.poiOffset(tile.encounter);
+    const px = x + offset.x;
+    const py = y + offset.y;
+    const color = this.poiColor(tile.encounter);
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.lineStyle(2, color, 0.55).lineBetween(x, y - 28, px, py + 12);
+    g.fillStyle(0x07090f, 0.94).fillRoundedRect(px - 18, py - 18, 36, 36, 10);
+    g.lineStyle(2, color, 1).strokeRoundedRect(px - 18, py - 18, 36, 36, 10);
+    this.drawPoiGlyph(tile.encounter, px, py, 1);
+  }
+
+  private drawPoiGlyph(kind: EncounterKind, x: number, y: number, scale: number) {
+    const color = this.poiColor(kind);
+    const glyph = kind === 'shop' ? '$' : kind === 'shrine' ? '+' : kind === 'skill' ? '?' : kind === 'boss' ? 'X' : '!';
+    this.layer.add(text(this, x, y - 9 * scale, glyph, Math.round(18 * scale), numberToHex(color)).setOrigin(0.5));
+  }
+
+  private poiOffset(kind: EncounterKind) {
+    if (kind === 'shop') return { x: -58, y: -64 };
+    if (kind === 'shrine') return { x: -44, y: -58 };
+    if (kind === 'skill') return { x: 0, y: -72 };
+    if (kind === 'boss') return { x: 58, y: -70 };
+    return { x: 46, y: -60 };
+  }
+
+  private poiColor(kind: EncounterKind) {
+    return kind === 'shop' ? theme.blue : kind === 'shrine' ? theme.green : kind === 'skill' ? theme.gold : theme.red;
   }
 
   private drawEncounterBody(tile: BoardTile) {
@@ -565,13 +625,14 @@ class GameScene extends Phaser.Scene {
     if (!this.hero || !this.run) return;
     const cost = terrainPalette[tile.terrain].moveCost;
     if (!this.isReachable(tile)) {
-      this.addLog('That tile is too far or too costly this turn.');
+      this.boardNotice = tile.q === this.hero.x && tile.r === this.hero.y ? 'You are already standing here.' : this.run.movesLeft <= 0 ? 'No movement left. End the turn to refresh movement.' : 'That tile is out of reach this turn. Gold outlines show valid moves.';
       this.render();
       return;
     }
     this.hero.x = tile.q;
     this.hero.y = tile.r;
     this.run.movesLeft -= cost;
+    this.boardNotice = `Moved to ${tile.label ?? tile.terrain}. ${this.run.movesLeft} movement remaining.`;
     this.addLog(`Moved to ${tile.label ?? tile.terrain} (-${cost} move).`);
     if (tile.encounter !== 'none' && !tile.resolved) {
       this.activeTile = tile;
@@ -594,6 +655,7 @@ class GameScene extends Phaser.Scene {
     if (this.run.turn % 3 === 1) this.run.day += 1;
     this.run.movesLeft = 3 + (this.hero.stats.speed >= 75 ? 1 : 0);
     this.run.pressure = Math.min(10, this.run.pressure + 1);
+    this.boardNotice = 'New turn. Movement refreshed; pressure rises.';
     if (this.run.pressure >= 10) {
       const damage = 3;
       this.hero.currentHp -= damage;
@@ -843,12 +905,20 @@ function iso(q: number, r: number, ox: number, oy: number) {
   return { x: ox + (q - r) * (TILE_W / 2), y: oy + (q + r) * (TILE_H / 2) };
 }
 
+function boardPoint(q: number, r: number) {
+  return iso(q, r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
+}
+
 function combatIso(row: number, col: number) {
   return { x: COMBAT_ORIGIN.x + (col - row) * 54, y: COMBAT_ORIGIN.y + (col + row) * 28 };
 }
 
 function diamond(x: number, y: number, w = TILE_W, h = TILE_H) {
   return [new Phaser.Math.Vector2(x, y - h / 2), new Phaser.Math.Vector2(x + w / 2, y), new Phaser.Math.Vector2(x, y + h / 2), new Phaser.Math.Vector2(x - w / 2, y)];
+}
+
+function numberToHex(value: number) {
+  return `#${value.toString(16).padStart(6, '0')}`;
 }
 
 function text(scene: Phaser.Scene, x: number, y: number, value: string, size: number, color: string, family = 'Inter, system-ui, sans-serif') {
