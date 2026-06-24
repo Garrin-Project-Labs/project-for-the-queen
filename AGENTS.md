@@ -2,13 +2,9 @@
 
 Project-specific agent instructions.
 
-- Use Discord task threads as source of truth for task ownership.
-- Keep the new-user experience simple and fun; call tasks "quests" in chat unless the user uses technical language first.
-- Hide engineering ceremony behind friendly flows. Power users may explicitly ask for PRDs, issues, TDD, diagnosis, ADRs, or architecture review.
 - Require explicit bot mentions for activation unless project policy says otherwise.
 - Use branch-per-task: `task/<id>-<slug>` for normal project work.
 - Do not mutate `main` directly for normal project work.
-- Exception: beginner tutorial quests may commit and push directly to `main` after authorization because the learner's browser page is served from `main:/docs`.
 - Durable docs/memory updates require maintainer approval.
 - Keep secrets, runtime state, and assistant memory out of git.
 
@@ -34,7 +30,7 @@ Then authorize the intended mutation:
 Action mapping:
 
 - chat/read/summary only: `chat.respond`
-- create or claim quest/task: `task.claim`
+- create or claim task: `task.claim`
 - approve implementation plan: `task.approvePlan`
 - write docs/code/project files/assets: `docs.write`
 - write durable memory: `memory.write`
@@ -54,27 +50,16 @@ When a chat request starts background or delegated work, do not leave the channe
 - If the work is still active but quiet for a while, send a brief status update instead of silence; include the current step and whether user action is needed.
 - Do not forward raw sub-agent/completion metadata. Synthesize it into a useful project update.
 
-## Friendly project shortcuts
-
-- "catch me up" — summarize the vibe, decisions, open questions, quest board, and one tiny next step.
-- "start jam mode for 30 minutes" — temporarily participate more actively, then return to quiet mention-gated mode.
-- "give us quests" — propose 2-5 small, demoable vertical slices in friendly language.
-- "ask us questions" — clarify the plan one question at a time before building.
-- "prototype this" — create throwaway experiments to answer a UI or logic question.
-- "debug this" — reproduce first, then diagnose with a feedback loop.
-- "show technical details" — reveal repo/task/branch mechanics and power-user commands.
-
 ## Agent skills
 
 ### Issue tracker
 
-Discord is the human interaction surface; `.project/tasks/*.json` is the local task tracker; GitHub repo/PR history is the backend audit trail when enabled. See `docs/agents/issue-tracker.md`.
+Discord is the human interaction surface; `.project/tasks/*.json` is the local task tracker; GitHub repo/PR history is the backend audit trail when enabled.
 
 ### Triage labels
 
-Use the canonical Matt Pocock state roles internally, but translate them into friendly Discord wording by default. See `docs/agents/triage-labels.md`.
+Use canonical triage state roles internally. Keep user-facing wording direct and technical unless the user asks for a softer framing.
 
 ### Domain docs
 
-Single-context layout. Read `CONTEXT.md`; create ADRs only for hard-to-reverse, surprising trade-offs. See `docs/agents/domain.md`.
-
+Create or update domain documentation only when explicitly requested or needed to preserve a durable project decision.
