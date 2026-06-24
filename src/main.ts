@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import './style.css';
 
-type Screen = 'menu' | 'heroes' | 'board' | 'combat';
+type Screen = 'menu' | 'heroes' | 'board' | 'encounter' | 'combat' | 'summary';
 type Terrain = 'road' | 'forest' | 'swamp' | 'mountain' | 'ruin' | 'town' | 'lava';
 type StatKey = 'might' | 'awareness' | 'intellect' | 'vitality' | 'speed' | 'luck';
+type EncounterKind = 'none' | 'shop' | 'ambush' | 'skill' | 'boss' | 'shrine';
 
 type HeroClass = {
   id: string;
@@ -21,8 +22,10 @@ type HeroClass = {
   stats: Record<StatKey, number>;
 };
 
-type PartyMember = HeroClass & {
+type PlayerHero = HeroClass & {
   currentHp: number;
+  maxHp: number;
+  guarded: boolean;
   x: number;
   y: number;
 };
@@ -32,32 +35,46 @@ type BoardTile = {
   r: number;
   terrain: Terrain;
   label?: string;
+  encounter: EncounterKind;
+  resolved?: boolean;
 };
 
-type CombatUnit = {
+type Enemy = {
+  id: string;
   name: string;
-  kind: 'hero' | 'enemy';
   hp: number;
   maxHp: number;
-  row: number;
-  col: number;
+  armor: number;
+  damage: number;
   color: number;
   note: string;
+  rewardGold: number;
+};
+
+type RunState = {
+  day: number;
+  turn: number;
+  movesLeft: number;
+  pressure: number;
+  gold: number;
+  herbs: number;
+  score: number;
+  log: string[];
 };
 
 const WIDTH = 1280;
 const HEIGHT = 760;
-const TILE_W = 92;
-const TILE_H = 46;
-const BOARD_ORIGIN = { x: 255, y: 145 };
-const COMBAT_ORIGIN = { x: 560, y: 248 };
-const MAX_PARTY = 3;
+const TILE_W = 94;
+const TILE_H = 48;
+const BOARD_ORIGIN = { x: 380, y: 190 };
+const COMBAT_ORIGIN = { x: 555, y: 268 };
+const START = { x: 0, y: 0 };
 
 const theme = {
   bg: 0x07090f,
   panel: 0x111623,
   panel2: 0x171d2e,
-  panel3: 0x202840,
+  panel3: 0x222a3f,
   ink: '#f7efd9',
   muted: '#aab3c8',
   dim: '#68728b',
@@ -81,7 +98,7 @@ const heroClasses: HeroClass[] = [
     armor: 4,
     focus: 2,
     weapon: 'War hammer + tower shield',
-    passive: 'Guarded allies in the back row take reduced first-hit damage.',
+    passive: 'Guard reduces the next enemy hit by an extra 4 damage.',
     stats: { might: 82, awareness: 42, intellect: 35, vitality: 88, speed: 38, luck: 46 },
   },
   {
@@ -96,7 +113,7 @@ const heroClasses: HeroClass[] = [
     armor: 1,
     focus: 3,
     weapon: 'Longbow + skinning knife',
-    passive: 'First overworld ambush each day has a lower success chance.',
+    passive: 'Ambushes start with the enemy slightly wounded.',
     stats: { might: 50, awareness: 86, intellect: 45, vitality: 55, speed: 78, luck: 61 },
   },
   {
@@ -111,7 +128,7 @@ const heroClasses: HeroClass[] = [
     armor: 0,
     focus: 5,
     weapon: 'Storm tome + mend charm',
-    passive: 'Once per combat, convert a failed intellect roll into partial success.',
+    passive: 'Skill checks can spend focus for a large bonus.',
     stats: { might: 32, awareness: 58, intellect: 90, vitality: 40, speed: 52, luck: 55 },
   },
   {
@@ -126,7 +143,7 @@ const heroClasses: HeroClass[] = [
     armor: 1,
     focus: 4,
     weapon: 'Oak staff + poultice satchel',
-    passive: 'Healing consumables restore a small amount to adjacent allies.',
+    passive: 'Starts with +1 herb and heals 2 extra from herbs.',
     stats: { might: 40, awareness: 62, intellect: 76, vitality: 66, speed: 54, luck: 59 },
   },
   {
@@ -141,7 +158,7 @@ const heroClasses: HeroClass[] = [
     armor: 1,
     focus: 4,
     weapon: 'Lute blade + charm dice',
-    passive: 'Party gains a small shop discount and improved flee odds.',
+    passive: 'Starts with extra gold and better flee odds.',
     stats: { might: 44, awareness: 56, intellect: 68, vitality: 48, speed: 64, luck: 84 },
   },
   {
@@ -156,51 +173,55 @@ const heroClasses: HeroClass[] = [
     armor: 2,
     focus: 2,
     weapon: 'Great axe + throwing hatchet',
-    passive: 'Critical melee hits apply armor break.',
+    passive: 'Hits hard, but has swingy accuracy.',
     stats: { might: 91, awareness: 48, intellect: 30, vitality: 76, speed: 44, luck: 43 },
   },
 ];
 
-const terrainPalette: Record<Terrain, { top: number; side: number; stroke: number; icon: string }> = {
-  road: { top: 0xb18a4e, side: 0x6f5433, stroke: 0x2e2319, icon: '·' },
-  forest: { top: 0x2f7448, side: 0x1f4b31, stroke: 0x12291b, icon: '♣' },
-  swamp: { top: 0x4a6258, side: 0x2d3e38, stroke: 0x14211e, icon: '≈' },
-  mountain: { top: 0x777a80, side: 0x4a4c52, stroke: 0x24262d, icon: '▲' },
-  ruin: { top: 0x82725b, side: 0x574a39, stroke: 0x2b241c, icon: '⌂' },
-  town: { top: 0xcaa75c, side: 0x87633b, stroke: 0x3d2a18, icon: '◆' },
-  lava: { top: 0xaa3c2c, side: 0x682019, stroke: 0x2f0f0c, icon: '!' },
+const terrainPalette: Record<Terrain, { top: number; side: number; stroke: number; icon: string; moveCost: number }> = {
+  road: { top: 0xb18a4e, side: 0x6f5433, stroke: 0x2e2319, icon: '·', moveCost: 1 },
+  forest: { top: 0x2f7448, side: 0x1f4b31, stroke: 0x12291b, icon: '♣', moveCost: 1 },
+  swamp: { top: 0x4a6258, side: 0x2d3e38, stroke: 0x14211e, icon: '≈', moveCost: 2 },
+  mountain: { top: 0x777a80, side: 0x4a4c52, stroke: 0x24262d, icon: '▲', moveCost: 2 },
+  ruin: { top: 0x82725b, side: 0x574a39, stroke: 0x2b241c, icon: '⌂', moveCost: 1 },
+  town: { top: 0xcaa75c, side: 0x87633b, stroke: 0x3d2a18, icon: '◆', moveCost: 1 },
+  lava: { top: 0xaa3c2c, side: 0x682019, stroke: 0x2f0f0c, icon: '!', moveCost: 2 },
 };
 
-const boardTiles: BoardTile[] = [
-  { q: 0, r: 0, terrain: 'town', label: 'Haven' },
-  { q: 1, r: 0, terrain: 'road' },
-  { q: 2, r: 0, terrain: 'forest' },
-  { q: 3, r: 0, terrain: 'ruin', label: 'Watchtower' },
-  { q: 4, r: 0, terrain: 'mountain' },
-  { q: 0, r: 1, terrain: 'forest' },
-  { q: 1, r: 1, terrain: 'road' },
-  { q: 2, r: 1, terrain: 'swamp' },
-  { q: 3, r: 1, terrain: 'forest' },
-  { q: 4, r: 1, terrain: 'ruin' },
-  { q: 0, r: 2, terrain: 'swamp' },
-  { q: 1, r: 2, terrain: 'road', label: 'Merchant' },
-  { q: 2, r: 2, terrain: 'road' },
-  { q: 3, r: 2, terrain: 'lava' },
-  { q: 4, r: 2, terrain: 'mountain', label: 'Mine Gate' },
-  { q: 0, r: 3, terrain: 'forest' },
-  { q: 1, r: 3, terrain: 'ruin' },
-  { q: 2, r: 3, terrain: 'road' },
-  { q: 3, r: 3, terrain: 'mountain' },
-  { q: 4, r: 3, terrain: 'lava', label: 'Boss' },
+const initialTiles: BoardTile[] = [
+  { q: 0, r: 0, terrain: 'town', label: 'Haven', encounter: 'none' },
+  { q: 1, r: 0, terrain: 'road', encounter: 'none' },
+  { q: 2, r: 0, terrain: 'forest', label: 'Snarewood', encounter: 'ambush' },
+  { q: 3, r: 0, terrain: 'ruin', label: 'Watchtower', encounter: 'skill' },
+  { q: 4, r: 0, terrain: 'mountain', encounter: 'none' },
+  { q: 0, r: 1, terrain: 'forest', encounter: 'shrine' },
+  { q: 1, r: 1, terrain: 'road', encounter: 'none' },
+  { q: 2, r: 1, terrain: 'swamp', label: 'Rot Fen', encounter: 'skill' },
+  { q: 3, r: 1, terrain: 'forest', encounter: 'ambush' },
+  { q: 4, r: 1, terrain: 'ruin', encounter: 'none' },
+  { q: 0, r: 2, terrain: 'swamp', encounter: 'none' },
+  { q: 1, r: 2, terrain: 'road', label: 'Merchant', encounter: 'shop' },
+  { q: 2, r: 2, terrain: 'road', encounter: 'none' },
+  { q: 3, r: 2, terrain: 'lava', label: 'Ash Pit', encounter: 'ambush' },
+  { q: 4, r: 2, terrain: 'mountain', label: 'Mine Gate', encounter: 'skill' },
+  { q: 0, r: 3, terrain: 'forest', encounter: 'none' },
+  { q: 1, r: 3, terrain: 'ruin', encounter: 'ambush' },
+  { q: 2, r: 3, terrain: 'road', encounter: 'none' },
+  { q: 3, r: 3, terrain: 'mountain', encounter: 'none' },
+  { q: 4, r: 3, terrain: 'lava', label: 'Tyrant Captain', encounter: 'boss' },
 ];
 
 class GameScene extends Phaser.Scene {
   private screen: Screen = 'menu';
   private layer!: Phaser.GameObjects.Container;
-  private selectedHeroIds = new Set<string>();
-  private party: PartyMember[] = [];
-  private selectedPartyIndex = 0;
-  private notice = 'Choose three heroes to begin.';
+  private selectedHeroId = 'hunter';
+  private hero?: PlayerHero;
+  private tiles: BoardTile[] = [];
+  private run?: RunState;
+  private activeTile?: BoardTile;
+  private enemy?: Enemy;
+  private combatLog: string[] = [];
+  private lastRoll = '';
 
   constructor() {
     super('GameScene');
@@ -213,15 +234,8 @@ class GameScene extends Phaser.Scene {
       this.screen = this.screen === 'menu' ? 'menu' : 'menu';
       this.render();
     });
-    this.input.keyboard?.on('keydown-SPACE', () => {
-      if (this.screen === 'board') this.screen = 'combat';
-      else if (this.screen === 'combat') this.screen = 'board';
-      this.render();
-    });
-    this.input.keyboard?.on('keydown-TAB', (event: KeyboardEvent) => {
-      event.preventDefault();
-      if (this.party.length > 0) this.selectedPartyIndex = (this.selectedPartyIndex + 1) % this.party.length;
-      this.render();
+    this.input.keyboard?.on('keydown-E', () => {
+      if (this.screen === 'board') this.endTurn();
     });
     this.render();
   }
@@ -232,196 +246,142 @@ class GameScene extends Phaser.Scene {
     if (this.screen === 'menu') this.drawMainMenu();
     if (this.screen === 'heroes') this.drawHeroSelect();
     if (this.screen === 'board') this.drawBoardScreen();
+    if (this.screen === 'encounter') this.drawEncounterScreen();
     if (this.screen === 'combat') this.drawCombatScreen();
+    if (this.screen === 'summary') this.drawSummaryScreen();
   }
 
   private drawBackground() {
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillGradientStyle(0x07090f, 0x07090f, 0x15101a, 0x0b0f18, 1);
+    g.fillGradientStyle(0x07090f, 0x07090f, 0x16111d, 0x0b0f18, 1);
     g.fillRect(0, 0, WIDTH, HEIGHT);
-
     for (let i = 0; i < 36; i++) {
       const x = 40 + ((i * 137) % 1190);
       const y = 36 + ((i * 71) % 680);
-      g.fillStyle(i % 4 === 0 ? theme.gold : 0x303852, i % 4 === 0 ? 0.16 : 0.1);
-      g.fillCircle(x, y, i % 4 === 0 ? 2.2 : 1.4);
+      g.fillStyle(i % 4 === 0 ? theme.gold : 0x303852, i % 4 === 0 ? 0.16 : 0.1).fillCircle(x, y, i % 4 === 0 ? 2.2 : 1.4);
     }
-
-    g.fillStyle(0x090c13, 0.84);
-    g.fillRoundedRect(18, 18, WIDTH - 36, HEIGHT - 36, 18);
-    g.lineStyle(2, theme.gold, 0.45);
-    g.strokeRoundedRect(18, 18, WIDTH - 36, HEIGHT - 36, 18);
-    g.lineStyle(1, 0x2d3448, 0.8);
-    g.strokeRoundedRect(28, 28, WIDTH - 56, HEIGHT - 56, 14);
+    g.fillStyle(0x090c13, 0.84).fillRoundedRect(18, 18, WIDTH - 36, HEIGHT - 36, 18);
+    g.lineStyle(2, theme.gold, 0.45).strokeRoundedRect(18, 18, WIDTH - 36, HEIGHT - 36, 18);
+    g.lineStyle(1, 0x2d3448, 0.8).strokeRoundedRect(28, 28, WIDTH - 56, HEIGHT - 56, 14);
   }
 
   private drawMainMenu() {
     this.drawOrnament(640, 88, 540);
     this.layer.add(text(this, 640, 104, 'FOR THE QUEEN', 58, theme.ink, 'Georgia, serif').setOrigin(0.5));
-    this.layer.add(text(this, 640, 158, 'a dark tabletop tactics adventure', 18, '#b9a370').setOrigin(0.5));
-
+    this.layer.add(text(this, 640, 158, 'single-hero tabletop tactics run', 18, '#b9a370').setOrigin(0.5));
     this.drawMiniBoardPreview(142, 224);
-
-    this.drawPanel(708, 218, 394, 250, 'Design Direction');
-    this.layer.add(text(this, 736, 268, 'Start with the PLAN.md pillars:', 16, theme.ink));
-    const bullets = [
-      'Party-first adventure',
-      'Readable tabletop turns',
-      'Risk-driven movement',
-      'Chance with mitigation',
-      'Compact tactical combat',
-      'Meaningful inventory pressure',
-    ];
-    bullets.forEach((item, i) => {
-      this.layer.add(text(this, 748, 304 + i * 26, `✦ ${item}`, 14, i === 0 ? '#f2d58a' : theme.muted));
+    this.drawPanel(708, 218, 394, 286, 'Current Playable Loop');
+    ['Pick and control one hero', 'Create a fresh run', 'Spend movement points on the board', 'Trigger shops, shrines, skill checks, ambushes', 'Resolve turn-based combat', 'Win by defeating the Tyrant Captain'].forEach((item, i) => {
+      this.layer.add(text(this, 742, 270 + i * 32, `✦ ${item}`, 15, i === 0 ? '#f2d58a' : theme.muted));
     });
-
-    this.drawButton(498, 514, 284, 58, 'New Expedition', () => {
+    this.drawButton(498, 532, 284, 58, 'New Run', () => {
       this.screen = 'heroes';
-      this.notice = 'Choose three heroes to begin.';
       this.render();
     }, true);
-    this.drawButton(498, 588, 284, 46, 'View Current Board', () => {
-      this.ensureDefaultParty();
-      this.screen = 'board';
-      this.render();
+    this.drawButton(498, 606, 284, 46, 'Quick Start Hunter', () => {
+      this.selectedHeroId = 'hunter';
+      this.createRun();
     });
-    this.drawButton(498, 646, 284, 38, 'Continue Run - not wired yet', () => undefined, false, true);
-
-    this.layer.add(text(this, 640, 716, 'Prototype milestone: main menu + hero selection. ESC returns here. Dark theme with gold accents.', 13, theme.dim).setOrigin(0.5));
+    this.layer.add(text(this, 640, 716, 'Dark UI with gold accents · E ends turn · ESC returns to menu', 13, theme.dim).setOrigin(0.5));
   }
 
   private drawHeroSelect() {
-    this.layer.add(text(this, 52, 44, 'Choose Your Party', 38, '#f2d58a', 'Georgia, serif'));
-    this.layer.add(text(this, 54, 90, 'Select exactly three heroes. Each class changes combat role, overworld checks, and starting equipment.', 15, theme.muted));
-
-    const selectedCount = this.selectedHeroIds.size;
-    this.layer.add(text(this, 54, 120, `${selectedCount}/${MAX_PARTY} selected`, 17, selectedCount === MAX_PARTY ? '#87d887' : '#f2d58a'));
-
-    heroClasses.forEach((hero, index) => this.drawHeroCard(hero, 54 + (index % 3) * 278, 158 + Math.floor(index / 3) * 214));
-
-    this.drawSelectedPartyPanel(914, 128);
-    this.drawButton(914, 578, 292, 54, 'Start Adventure', () => {
-      if (this.selectedHeroIds.size !== MAX_PARTY) {
-        this.notice = 'Select three heroes before starting.';
-        this.render();
-        return;
-      }
-      this.createPartyFromSelection();
-      this.screen = 'board';
-      this.render();
-    }, selectedCount === MAX_PARTY, selectedCount !== MAX_PARTY);
+    this.layer.add(text(this, 52, 44, 'Choose One Hero', 38, '#f2d58a', 'Georgia, serif'));
+    this.layer.add(text(this, 54, 90, 'Players control one hero. Party mechanics may come later as AI allies or multiplayer roles.', 15, theme.muted));
+    heroClasses.forEach((hero, index) => this.drawHeroCard(hero, 54 + (index % 3) * 278, 142 + Math.floor(index / 3) * 214));
+    const selected = this.heroClass(this.selectedHeroId);
+    this.drawPanel(914, 128, 292, 420, 'Selected Hero');
+    this.layer.add(text(this, 940, 190, selected.name, 28, theme.ink, 'Georgia, serif'));
+    this.layer.add(text(this, 940, 226, selected.archetype, 14, '#d5c185'));
+    this.layer.add(text(this, 940, 262, selected.role, 13, theme.muted).setWordWrapWidth(230));
+    this.layer.add(text(this, 940, 320, `HP ${selected.hp} · Armor ${selected.armor} · Focus ${selected.focus}`, 14, '#f2d58a'));
+    this.layer.add(text(this, 940, 354, selected.weapon, 13, theme.muted).setWordWrapWidth(230));
+    this.layer.add(text(this, 940, 402, selected.passive, 12, '#96a3c0').setWordWrapWidth(230));
+    this.drawButton(914, 578, 292, 54, 'Create Run', () => this.createRun(), true);
     this.drawButton(914, 644, 292, 42, 'Back to Main Menu', () => {
       this.screen = 'menu';
       this.render();
     });
-    this.layer.add(text(this, 914, 704, this.notice, 13, selectedCount === MAX_PARTY ? '#87d887' : '#cbb783'));
   }
 
   private drawHeroCard(hero: HeroClass, x: number, y: number) {
-    const selected = this.selectedHeroIds.has(hero.id);
-    const disabled = !selected && this.selectedHeroIds.size >= MAX_PARTY;
+    const selected = this.selectedHeroId === hero.id;
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(selected ? 0x252034 : theme.panel, disabled ? 0.58 : 1);
-    g.fillRoundedRect(x, y, 250, 184, 14);
-    g.lineStyle(selected ? 3 : 1, selected ? theme.brightGold : 0x3a4258, disabled ? 0.5 : 1);
-    g.strokeRoundedRect(x, y, 250, 184, 14);
-    g.fillStyle(hero.color, disabled ? 0.4 : 1).fillCircle(x + 34, y + 38, 19);
-    g.lineStyle(2, hero.accent, disabled ? 0.45 : 1).strokeCircle(x + 34, y + 38, 19);
-    g.fillStyle(0x05070c, 0.55).fillRoundedRect(x + 154, y + 20, 68, 24, 8);
-
+    g.fillStyle(selected ? 0x252034 : theme.panel, 1).fillRoundedRect(x, y, 250, 184, 14);
+    g.lineStyle(selected ? 3 : 1, selected ? theme.brightGold : 0x3a4258, 1).strokeRoundedRect(x, y, 250, 184, 14);
+    g.fillStyle(hero.color, 1).fillCircle(x + 34, y + 38, 19);
+    g.lineStyle(2, hero.accent, 1).strokeCircle(x + 34, y + 38, 19);
     this.layer.add(text(this, x + 66, y + 20, hero.name, 19, selected ? '#f7efd9' : '#dfe5f4', 'Georgia, serif'));
     this.layer.add(text(this, x + 66, y + 45, hero.archetype, 12, '#bca66e'));
-    this.layer.add(text(this, x + 165, y + 26, selected ? 'CHOSEN' : 'CLASS', 10, selected ? '#f2d58a' : '#8690a8'));
     this.layer.add(text(this, x + 24, y + 76, hero.role, 12, theme.muted).setWordWrapWidth(202));
-
-    this.drawTinyStats(hero, x + 24, y + 116, disabled);
-
-    const zone = this.add.zone(x, y, 250, 184).setOrigin(0).setInteractive({ useHandCursor: !disabled });
+    this.drawTinyStats(hero, x + 24, y + 116);
+    const zone = this.add.zone(x, y, 250, 184).setOrigin(0).setInteractive({ useHandCursor: true });
     zone.on('pointerdown', () => {
-      if (selected) this.selectedHeroIds.delete(hero.id);
-      else if (this.selectedHeroIds.size < MAX_PARTY) this.selectedHeroIds.add(hero.id);
-      this.notice = this.selectedHeroIds.size === MAX_PARTY ? 'Party ready. Start Adventure to enter the board.' : 'Choose three heroes to begin.';
+      this.selectedHeroId = hero.id;
       this.render();
     });
     this.layer.add(zone);
   }
 
-  private drawTinyStats(hero: HeroClass, x: number, y: number, faded: boolean) {
-    const entries: [StatKey, string][] = [
-      ['might', 'MGT'],
-      ['awareness', 'AWR'],
-      ['intellect', 'INT'],
-      ['vitality', 'VIT'],
-      ['speed', 'SPD'],
-      ['luck', 'LCK'],
-    ];
-    entries.forEach(([key, label], index) => {
-      const yy = y + index * 10;
-      const value = hero.stats[key];
-      const g = this.add.graphics();
-      this.layer.add(g);
-      g.fillStyle(0x070a11, faded ? 0.35 : 0.7).fillRoundedRect(x + 42, yy + 1, 120, 5, 3);
-      g.fillStyle(value >= 80 ? theme.gold : 0x617095, faded ? 0.35 : 0.95).fillRoundedRect(x + 42, yy + 1, Math.round(value * 1.2), 5, 3);
-      this.layer.add(text(this, x, yy - 3, label, 8, faded ? '#535a6e' : '#8994ac'));
-    });
-  }
-
-  private drawSelectedPartyPanel(x: number, y: number) {
-    this.drawPanel(x, y, 292, 424, 'Party Draft');
-    const selectedHeroes = heroClasses.filter((hero) => this.selectedHeroIds.has(hero.id));
-    if (selectedHeroes.length === 0) {
-      this.layer.add(text(this, x + 24, y + 70, 'No heroes selected yet.', 15, theme.muted));
-      this.layer.add(text(this, x + 24, y + 104, 'Pick three complementary roles:\nfront-line, damage, support, scout, or luck economy.', 13, '#778299').setWordWrapWidth(238));
-      return;
-    }
-
-    selectedHeroes.forEach((hero, index) => {
-      const yy = y + 62 + index * 102;
-      const g = this.add.graphics();
-      this.layer.add(g);
-      g.fillStyle(0x0c111b, 1).fillRoundedRect(x + 20, yy, 252, 82, 10);
-      g.lineStyle(1, hero.accent, 0.55).strokeRoundedRect(x + 20, yy, 252, 82, 10);
-      g.fillStyle(hero.color, 1).fillCircle(x + 48, yy + 28, 14);
-      this.layer.add(text(this, x + 72, yy + 12, hero.name, 16, theme.ink, 'Georgia, serif'));
-      this.layer.add(text(this, x + 72, yy + 34, `HP ${hero.hp} · Armor ${hero.armor} · Focus ${hero.focus}`, 12, '#d1c08b'));
-      this.layer.add(text(this, x + 26, yy + 58, hero.weapon, 11, theme.muted));
-    });
-  }
-
   private drawBoardScreen() {
-    this.ensureDefaultParty();
+    if (!this.hero || !this.run) this.createRun(false);
     this.layer.add(text(this, 52, 44, 'Expedition Board', 36, '#f2d58a', 'Georgia, serif'));
-    this.layer.add(text(this, 54, 88, 'Turn-based overworld movement: pathing, terrain risk, towns, encounters, and objectives.', 14, theme.muted));
+    this.layer.add(text(this, 54, 88, 'Spend movement, choose routes, trigger encounters, then end the turn when stuck or safe.', 14, theme.muted));
     this.drawBoardMap(48, 118);
     this.drawRunPanel(914, 86);
-    this.drawButton(914, 632, 292, 42, 'Enter Combat Preview', () => {
-      this.screen = 'combat';
-      this.render();
-    });
-    this.drawButton(914, 684, 292, 36, 'Back to Hero Select', () => {
-      this.screen = 'heroes';
-      this.render();
-    });
-  }
-
-  private drawCombatScreen() {
-    this.ensureDefaultParty();
-    this.layer.add(text(this, 52, 44, 'Combat Preview', 36, '#f2d58a', 'Georgia, serif'));
-    this.layer.add(text(this, 54, 88, 'Compact tactical battle grid: front line, back row, turn order, abilities, and HP pressure.', 14, theme.muted));
-    this.drawCombatGrid();
-    this.drawRunPanel(914, 86);
-    this.drawActionBar(78, 570);
-    this.drawButton(914, 632, 292, 42, 'Return to Board', () => {
-      this.screen = 'board';
-      this.render();
-    });
+    this.drawButton(914, 632, 292, 42, 'End Turn (E)', () => this.endTurn());
     this.drawButton(914, 684, 292, 36, 'Back to Menu', () => {
       this.screen = 'menu';
       this.render();
     });
+  }
+
+  private drawEncounterScreen() {
+    if (!this.activeTile || !this.hero || !this.run) return;
+    const tile = this.activeTile;
+    this.layer.add(text(this, 52, 44, 'Encounter', 38, '#f2d58a', 'Georgia, serif'));
+    this.drawPanel(190, 136, 900, 470, tile.label ?? this.encounterTitle(tile.encounter));
+    const body = this.drawEncounterBody(tile);
+    this.layer.add(text(this, 238, 212, body, 17, theme.ink).setWordWrapWidth(790));
+    this.layer.add(text(this, 238, 330, this.lastRoll || 'Choose how to resolve this stop.', 14, '#cbb783').setWordWrapWidth(760));
+
+    if (tile.encounter === 'shop') {
+      this.drawButton(252, 452, 220, 54, 'Buy Herb - 12g', () => this.buyHerb(), true, this.run.gold < 12);
+      this.drawButton(500, 452, 220, 54, 'Leave Shop', () => this.resolveEncounter('You leave the merchant camp.'));
+    } else if (tile.encounter === 'shrine') {
+      this.drawButton(252, 452, 220, 54, 'Rest at Shrine', () => this.restShrine(), true);
+      this.drawButton(500, 452, 220, 54, 'Move On', () => this.resolveEncounter('You leave the shrine untouched.'));
+    } else if (tile.encounter === 'skill') {
+      this.drawButton(252, 452, 220, 54, 'Attempt Check', () => this.skillCheck(), true);
+      this.drawButton(500, 452, 220, 54, 'Spend 1 Focus', () => this.skillCheck(true), false, this.hero.focus <= 0);
+    } else {
+      this.drawButton(252, 452, 220, 54, 'Fight', () => this.startCombat(tile), true);
+      this.drawButton(500, 452, 220, 54, 'Try to Sneak Past', () => this.trySneak());
+    }
+    this.drawCompactHeroPanel(770, 440);
+  }
+
+  private drawCombatScreen() {
+    if (!this.hero || !this.run || !this.enemy) return;
+    this.layer.add(text(this, 52, 44, 'Combat Resolution', 36, '#f2d58a', 'Georgia, serif'));
+    this.layer.add(text(this, 54, 88, 'Resolve attacks turn by turn. This is basic but already playable: attack, guard, heal, flee.', 14, theme.muted));
+    this.drawCombatGrid();
+    this.drawCombatSidePanel(914, 86);
+    this.drawActionBar(78, 598);
+  }
+
+  private drawSummaryScreen() {
+    const won = !!this.hero && this.hero.currentHp > 0 && this.activeTile?.encounter === 'boss' && this.activeTile.resolved;
+    this.layer.add(text(this, 640, 128, won ? 'Run Complete' : 'Run Over', 54, won ? '#f2d58a' : '#e08778', 'Georgia, serif').setOrigin(0.5));
+    this.drawPanel(340, 218, 600, 300, won ? 'The Tyrant Captain Falls' : 'The Road Claims Another Hero');
+    this.layer.add(text(this, 386, 292, won ? 'You cleared the first playable objective. The next layer should add deeper loot, level-ups, and more encounter chains.' : 'You were defeated. The next layer should add meta progression and restart bonuses.', 17, theme.ink).setWordWrapWidth(510));
+    this.layer.add(text(this, 386, 378, `Score: ${this.run?.score ?? 0} · Gold: ${this.run?.gold ?? 0} · Day: ${this.run?.day ?? 1}`, 18, '#f2d58a'));
+    this.drawButton(498, 570, 284, 56, 'New Run', () => {
+      this.screen = 'heroes';
+      this.render();
+    }, true);
   }
 
   private drawBoardMap(x: number, y: number) {
@@ -430,113 +390,124 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x101521, 0.96).fillRoundedRect(x, y, 800, 472, 18);
     g.lineStyle(1, theme.gold, 0.38).strokeRoundedRect(x, y, 800, 472, 18);
     g.fillStyle(0x000000, 0.36).fillEllipse(x + 390, y + 296, 650, 200);
-
-    boardTiles.forEach((tile) => this.drawIsoTile(tile));
+    this.tiles.forEach((tile) => this.drawIsoTile(tile));
     this.drawBoardPath();
     this.drawBoardEvents();
-    this.party.forEach((member, index) => this.drawPartyToken(member, index));
+    if (this.hero) this.drawHeroToken(this.hero);
   }
 
   private drawIsoTile(tile: BoardTile) {
-    const { x, y } = iso(tile.q, tile.r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
+    const p = iso(tile.q, tile.r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
     const palette = terrainPalette[tile.terrain];
     const g = this.add.graphics();
     this.layer.add(g);
-    const points = diamond(x, y);
-    g.fillStyle(palette.side, 1);
-    g.fillPoints([
+    const points = diamond(p.x, p.y);
+    const reachable = this.hero ? this.isReachable(tile) : false;
+    g.fillStyle(palette.side, 1).fillPoints([
       new Phaser.Math.Vector2(points[1].x, points[1].y),
       new Phaser.Math.Vector2(points[2].x, points[2].y),
       new Phaser.Math.Vector2(points[2].x, points[2].y + 18),
       new Phaser.Math.Vector2(points[1].x, points[1].y + 18),
     ], true);
-    g.fillStyle(palette.top, 1).fillPoints(points, true);
-    g.lineStyle(2, palette.stroke, 0.9).strokePoints(points, true);
-    this.layer.add(text(this, x - 6, y - 17, palette.icon, 20, '#10131a'));
-    if (tile.label) this.layer.add(text(this, x - 42, y + 22, tile.label, 12, '#f5e7c0').setShadow(1, 1, '#000', 2));
-
-    const hit = this.add.zone(x, y, TILE_W, TILE_H).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    hit.on('pointerdown', () => {
-      if (!this.party.length) return;
-      this.party[this.selectedPartyIndex].x = tile.q;
-      this.party[this.selectedPartyIndex].y = tile.r;
-      this.render();
-    });
+    g.fillStyle(palette.top, tile.resolved ? 0.68 : 1).fillPoints(points, true);
+    g.lineStyle(reachable ? 3 : 2, reachable ? theme.brightGold : palette.stroke, reachable ? 1 : 0.9).strokePoints(points, true);
+    this.layer.add(text(this, p.x - 6, p.y - 17, palette.icon, 20, '#10131a'));
+    if (tile.label) this.layer.add(text(this, p.x - 44, p.y + 22, tile.label, 12, '#f5e7c0').setShadow(1, 1, '#000', 2));
+    const hit = this.add.zone(p.x, p.y, TILE_W, TILE_H).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => this.moveTo(tile));
     this.layer.add(hit);
   }
 
   private drawBoardPath() {
     const g = this.add.graphics();
     this.layer.add(g);
-    g.lineStyle(4, theme.gold, 0.42);
+    g.lineStyle(4, theme.gold, 0.36);
     const route = [
-      iso(0, 0, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
-      iso(1, 1, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
-      iso(2, 2, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
-      iso(3, 3, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
+      iso(0, 0, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52), iso(1, 1, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
+      iso(2, 2, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52), iso(3, 3, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
       iso(4, 3, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52),
     ];
     for (let i = 0; i < route.length - 1; i++) g.lineBetween(route[i].x, route[i].y, route[i + 1].x, route[i + 1].y);
   }
 
   private drawBoardEvents() {
-    const nodes = [
-      { q: 2, r: 1, text: 'ambush', color: theme.red },
-      { q: 3, r: 0, text: 'skill check', color: theme.gold },
-      { q: 1, r: 2, text: 'shop', color: theme.blue },
-      { q: 4, r: 3, text: 'boss', color: theme.red },
-    ];
-    nodes.forEach((node) => {
-      const p = iso(node.q, node.r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
+    this.tiles.filter((tile) => tile.encounter !== 'none' && !tile.resolved).forEach((tile) => {
+      const p = iso(tile.q, tile.r, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
+      const color = tile.encounter === 'shop' ? theme.blue : tile.encounter === 'shrine' ? theme.green : tile.encounter === 'skill' ? theme.gold : theme.red;
       const g = this.add.graphics();
       this.layer.add(g);
-      g.fillStyle(0x07090f, 0.92).fillRoundedRect(p.x - 44, p.y - 60, 88, 22, 9);
-      g.lineStyle(1, node.color, 1).strokeRoundedRect(p.x - 44, p.y - 60, 88, 22, 9);
-      g.fillStyle(node.color, 1).fillCircle(p.x - 32, p.y - 49, 4);
-      this.layer.add(text(this, p.x - 22, p.y - 56, node.text, 11, '#edf2ff'));
+      g.fillStyle(0x07090f, 0.92).fillRoundedRect(p.x - 45, p.y - 60, 90, 22, 9);
+      g.lineStyle(1, color, 1).strokeRoundedRect(p.x - 45, p.y - 60, 90, 22, 9);
+      g.fillStyle(color, 1).fillCircle(p.x - 32, p.y - 49, 4);
+      this.layer.add(text(this, p.x - 22, p.y - 56, tile.encounter, 11, '#edf2ff'));
     });
   }
 
-  private drawPartyToken(member: PartyMember, index: number) {
-    const p = iso(member.x, member.y, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
-    const x = p.x + index * 16 - 16;
-    const y = p.y - 30 - index * 3;
+  private drawHeroToken(hero: PlayerHero) {
+    const p = iso(hero.x, hero.y, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 52);
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x000000, 0.42).fillEllipse(x, y + 23, 30, 10);
-    g.fillStyle(member.color, 1).fillCircle(x, y, index === this.selectedPartyIndex ? 15 : 12);
-    g.lineStyle(2, index === this.selectedPartyIndex ? theme.brightGold : 0x151515, 1).strokeCircle(x, y, index === this.selectedPartyIndex ? 15 : 12);
-    this.layer.add(text(this, x - 26, y - 34, member.name.slice(0, 3), 11, '#f9f3df').setShadow(1, 1, '#000', 2));
+    g.fillStyle(0x000000, 0.42).fillEllipse(p.x, p.y - 6, 34, 12);
+    g.fillStyle(hero.color, 1).fillCircle(p.x, p.y - 32, 16);
+    g.lineStyle(2, theme.brightGold, 1).strokeCircle(p.x, p.y - 32, 16);
+    this.layer.add(text(this, p.x - 28, p.y - 68, hero.name.slice(0, 4), 11, '#f9f3df').setShadow(1, 1, '#000', 2));
+  }
+
+  private drawRunPanel(x: number, y: number) {
+    if (!this.hero || !this.run) return;
+    this.drawPanel(x, y, 292, 518, 'Run State');
+    this.layer.add(text(this, x + 24, y + 62, `Day ${this.run.day} · Turn ${this.run.turn}`, 16, theme.ink));
+    this.layer.add(text(this, x + 24, y + 92, `Moves left: ${this.run.movesLeft}`, 15, '#f2d58a'));
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x06080d, 1).fillRoundedRect(x + 24, y + 134, 244, 18, 9);
+    g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 134, Math.min(244, this.run.pressure * 24.4), 18, 9);
+    this.layer.add(text(this, x + 24, y + 162, `Pressure ${this.run.pressure}/10`, 12, theme.muted));
+    this.layer.add(text(this, x + 24, y + 204, this.hero.name, 20, theme.ink, 'Georgia, serif'));
+    this.layer.add(text(this, x + 24, y + 236, `HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.hero.armor} · Focus ${this.hero.focus}`, 13, '#d5c185'));
+    this.layer.add(text(this, x + 24, y + 266, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Score ${this.run.score}`, 13, theme.muted));
+    this.layer.add(text(this, x + 24, y + 318, 'Log', 12, '#d5c185'));
+    this.run.log.slice(-5).forEach((line, i) => this.layer.add(text(this, x + 24, y + 344 + i * 26, `• ${line}`, 11, '#9eaac7').setWordWrapWidth(238)));
+  }
+
+  private drawEncounterBody(tile: BoardTile) {
+    if (tile.encounter === 'shop') return 'A lantern-lit merchant wagon blocks the road. The prices are bad, but the road ahead is worse.';
+    if (tile.encounter === 'shrine') return 'A cracked shrine hums with old warmth. Resting here can restore health without spending supplies.';
+    if (tile.encounter === 'skill') return 'The path is blocked by a hazard. Roll against your best relevant stat to claim the reward without paying in blood.';
+    if (tile.encounter === 'boss') return 'The Tyrant Captain waits at the mine gate. Defeat this enemy to complete the first playable run.';
+    return 'An enemy patrol springs from the terrain. Fight, or gamble on slipping away before steel comes out.';
+  }
+
+  private drawCompactHeroPanel(x: number, y: number) {
+    if (!this.hero || !this.run) return;
+    this.layer.add(text(this, x, y, `${this.hero.name}: HP ${this.hero.currentHp}/${this.hero.maxHp}`, 15, theme.ink));
+    this.layer.add(text(this, x, y + 30, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Focus ${this.hero.focus}`, 13, theme.muted));
   }
 
   private drawCombatGrid() {
+    if (!this.hero || !this.enemy) return;
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x101521, 0.96).fillRoundedRect(48, 118, 800, 426, 18);
-    g.lineStyle(1, theme.gold, 0.38).strokeRoundedRect(48, 118, 800, 426, 18);
+    g.fillStyle(0x101521, 0.96).fillRoundedRect(48, 118, 800, 456, 18);
+    g.lineStyle(1, theme.gold, 0.38).strokeRoundedRect(48, 118, 800, 456, 18);
     g.fillStyle(0x000000, 0.44).fillEllipse(445, 374, 710, 230);
-
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 5; col++) this.drawCombatTile(row, col);
-    }
-
-    const units = this.combatUnitsFromParty();
-    units.forEach((unit) => this.drawCombatUnit(unit));
-    this.drawTurnOrder(76, 150, units);
+    for (let row = 0; row < 3; row++) for (let col = 0; col < 5; col++) this.drawCombatTile(row, col);
+    this.drawCombatUnit({ name: this.hero.name, kind: 'hero', hp: this.hero.currentHp, maxHp: this.hero.maxHp, row: 1, col: 0, color: this.hero.color, note: this.hero.weapon });
+    this.drawCombatUnit({ ...this.enemy, kind: 'enemy', row: 1, col: 4 } as Enemy & { kind: 'enemy'; row: number; col: number });
   }
 
   private drawCombatTile(row: number, col: number) {
-    const { x, y } = combatIso(row, col);
+    const p = combatIso(row, col);
     const heroSide = col < 2;
     const g = this.add.graphics();
     this.layer.add(g);
-    const points = diamond(x, y, 104, 52);
+    const points = diamond(p.x, p.y, 104, 52);
     g.fillStyle(heroSide ? 0x263149 : 0x3a2630, 1).fillPoints(points, true);
     g.lineStyle(2, heroSide ? 0x64728f : 0x7d4d5b, 0.9).strokePoints(points, true);
     if (col === 2) g.lineStyle(3, theme.gold, 0.35).strokePoints(points, true);
   }
 
-  private drawCombatUnit(unit: CombatUnit) {
+  private drawCombatUnit(unit: { name: string; kind: 'hero' | 'enemy'; hp: number; maxHp: number; row: number; col: number; color: number; note: string }) {
     const p = combatIso(unit.row, unit.col);
     const g = this.add.graphics();
     this.layer.add(g);
@@ -545,77 +516,278 @@ class GameScene extends Phaser.Scene {
     g.lineStyle(2, unit.kind === 'hero' ? theme.brightGold : 0xff8c7a, 1).strokeRoundedRect(p.x - 18, p.y - 44, 36, 48, 9);
     g.fillStyle(0x171923, 1).fillRect(p.x - 10, p.y - 31, 6, 6);
     g.fillRect(p.x + 5, p.y - 31, 6, 6);
-    g.fillStyle(0x10131d, 1).fillRoundedRect(p.x - 38, p.y + 8, 76, 9, 5);
-    g.fillStyle(unit.kind === 'hero' ? theme.green : theme.red, 1).fillRoundedRect(p.x - 38, p.y + 8, 76 * (unit.hp / unit.maxHp), 9, 5);
-    this.layer.add(text(this, p.x - 44, p.y + 22, unit.name, 11, '#f4f0df').setShadow(1, 1, '#000', 2));
-    this.layer.add(text(this, p.x - 34, p.y + 38, `${unit.hp}/${unit.maxHp} · ${unit.note}`, 10, '#acb8d6').setShadow(1, 1, '#000', 2));
+    g.fillStyle(0x10131d, 1).fillRoundedRect(p.x - 42, p.y + 8, 84, 9, 5);
+    g.fillStyle(unit.kind === 'hero' ? theme.green : theme.red, 1).fillRoundedRect(p.x - 42, p.y + 8, 84 * Math.max(0, unit.hp / unit.maxHp), 9, 5);
+    this.layer.add(text(this, p.x - 48, p.y + 24, unit.name, 12, '#f4f0df').setShadow(1, 1, '#000', 2));
+    this.layer.add(text(this, p.x - 42, p.y + 42, `${unit.hp}/${unit.maxHp} · ${unit.note}`, 10, '#acb8d6').setShadow(1, 1, '#000', 2));
   }
 
-  private drawTurnOrder(x: number, y: number, units: CombatUnit[]) {
-    this.layer.add(text(this, x, y, 'Turn Order', 12, '#d5c185'));
-    units.slice(0, 6).forEach((unit, index) => {
-      const g = this.add.graphics();
-      this.layer.add(g);
-      const yy = y + 28 + index * 31;
-      g.fillStyle(index === 0 ? 0x27334f : 0x0d121d, 0.95).fillRoundedRect(x, yy, 152, 24, 7);
-      g.lineStyle(1, index === 0 ? theme.brightGold : 0x2e3852, 0.8).strokeRoundedRect(x, yy, 152, 24, 7);
-      this.layer.add(text(this, x + 10, yy + 5, `${index + 1}. ${unit.name}`, 11, '#dce5fb'));
-    });
+  private drawCombatSidePanel(x: number, y: number) {
+    if (!this.hero || !this.enemy || !this.run) return;
+    this.drawPanel(x, y, 292, 518, 'Combat State');
+    this.layer.add(text(this, x + 24, y + 64, `${this.hero.name} vs ${this.enemy.name}`, 16, theme.ink));
+    this.layer.add(text(this, x + 24, y + 96, `Enemy: HP ${this.enemy.hp}/${this.enemy.maxHp} · AR ${this.enemy.armor}`, 13, '#e6a49b'));
+    this.layer.add(text(this, x + 24, y + 126, `Hero: HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.hero.armor}`, 13, '#bde5bf'));
+    this.layer.add(text(this, x + 24, y + 172, 'Combat Log', 12, '#d5c185'));
+    this.combatLog.slice(-8).forEach((line, i) => this.layer.add(text(this, x + 24, y + 202 + i * 30, `• ${line}`, 11, '#aab3c8').setWordWrapWidth(238)));
   }
 
   private drawActionBar(x: number, y: number) {
-    this.layer.add(text(this, x, y - 30, 'Selected action preview', 12, '#d9c27d'));
-    ['Strike 78%', 'Guard Ally', 'Use Item', 'Move Row', 'Flee 38%'].forEach((action, index) => {
-      const xx = x + index * 148;
+    this.drawButton(x, y, 150, 48, 'Attack', () => this.playerAttack(), true);
+    this.drawButton(x + 168, y, 150, 48, 'Guard', () => this.playerGuard());
+    this.drawButton(x + 336, y, 150, 48, 'Use Herb', () => this.useHerb(), false, !this.run || this.run.herbs <= 0);
+    this.drawButton(x + 504, y, 150, 48, 'Flee', () => this.fleeCombat());
+  }
+
+  private createRun(render = true) {
+    const base = this.heroClass(this.selectedHeroId);
+    this.hero = { ...base, maxHp: base.hp, currentHp: base.hp, guarded: false, x: START.x, y: START.y };
+    this.tiles = initialTiles.map((tile) => ({ ...tile, resolved: tile.encounter === 'none' }));
+    this.run = {
+      day: 1,
+      turn: 1,
+      movesLeft: 3,
+      pressure: 0,
+      gold: base.id === 'minstrel' ? 30 : 18,
+      herbs: base.id === 'herbalist' ? 3 : 2,
+      score: 0,
+      log: [`${base.name} leaves Haven alone.`],
+    };
+    this.activeTile = undefined;
+    this.enemy = undefined;
+    this.combatLog = [];
+    this.lastRoll = '';
+    this.screen = 'board';
+    if (render) this.render();
+  }
+
+  private moveTo(tile: BoardTile) {
+    if (!this.hero || !this.run) return;
+    const cost = terrainPalette[tile.terrain].moveCost;
+    if (!this.isReachable(tile)) {
+      this.addLog('That tile is too far or too costly this turn.');
+      this.render();
+      return;
+    }
+    this.hero.x = tile.q;
+    this.hero.y = tile.r;
+    this.run.movesLeft -= cost;
+    this.addLog(`Moved to ${tile.label ?? tile.terrain} (-${cost} move).`);
+    if (tile.encounter !== 'none' && !tile.resolved) {
+      this.activeTile = tile;
+      this.lastRoll = '';
+      this.screen = 'encounter';
+    }
+    this.render();
+  }
+
+  private isReachable(tile: BoardTile) {
+    if (!this.hero || !this.run) return false;
+    if (tile.q === this.hero.x && tile.r === this.hero.y) return false;
+    const adjacent = Math.abs(tile.q - this.hero.x) <= 1 && Math.abs(tile.r - this.hero.y) <= 1 && Math.abs((tile.q - tile.r) - (this.hero.x - this.hero.y)) <= 2;
+    return adjacent && terrainPalette[tile.terrain].moveCost <= this.run.movesLeft;
+  }
+
+  private endTurn() {
+    if (!this.run || !this.hero) return;
+    this.run.turn += 1;
+    if (this.run.turn % 3 === 1) this.run.day += 1;
+    this.run.movesLeft = 3 + (this.hero.stats.speed >= 75 ? 1 : 0);
+    this.run.pressure = Math.min(10, this.run.pressure + 1);
+    if (this.run.pressure >= 10) {
+      const damage = 3;
+      this.hero.currentHp -= damage;
+      this.addLog(`Pressure bites: ${damage} damage from spreading patrols.`);
+      if (this.hero.currentHp <= 0) {
+        this.screen = 'summary';
+        this.render();
+        return;
+      }
+    } else {
+      this.addLog('Turn ended. Movement refreshed; pressure rises.');
+    }
+    this.screen = 'board';
+    this.render();
+  }
+
+  private buyHerb() {
+    if (!this.run) return;
+    if (this.run.gold < 12) return;
+    this.run.gold -= 12;
+    this.run.herbs += 1;
+    this.resolveEncounter('Bought one herb.');
+  }
+
+  private restShrine() {
+    if (!this.hero) return;
+    const heal = 8;
+    this.hero.currentHp = Math.min(this.hero.maxHp, this.hero.currentHp + heal);
+    this.resolveEncounter(`The shrine restores ${heal} HP.`);
+  }
+
+  private skillCheck(spendFocus = false) {
+    if (!this.hero || !this.run || !this.activeTile) return;
+    const stat = Math.max(this.hero.stats.awareness, this.hero.stats.intellect, this.hero.stats.luck);
+    const bonus = spendFocus && this.hero.focus > 0 ? 20 : 0;
+    if (spendFocus) this.hero.focus -= 1;
+    const roll = Phaser.Math.Between(1, 100);
+    const target = Math.min(95, stat + bonus - this.run.pressure * 2);
+    const success = roll <= target;
+    this.lastRoll = `Rolled ${roll} vs ${target}${spendFocus ? ' after spending focus' : ''}.`;
+    if (success) {
+      this.run.gold += 10;
+      this.run.score += 15;
+      this.resolveEncounter(`${this.lastRoll} Success: gained 10 gold and reduced pressure.`);
+      this.run.pressure = Math.max(0, this.run.pressure - 1);
+    } else {
+      const damage = 5;
+      this.hero.currentHp -= damage;
+      this.resolveEncounter(`${this.lastRoll} Failure: took ${damage} damage.`);
+      if (this.hero.currentHp <= 0) this.screen = 'summary';
+    }
+  }
+
+  private trySneak() {
+    if (!this.hero || !this.run || !this.activeTile) return;
+    const roll = Phaser.Math.Between(1, 100);
+    const target = Math.min(85, this.hero.stats.awareness * 0.55 + this.hero.stats.luck * 0.35 + (this.hero.id === 'minstrel' ? 10 : 0));
+    if (roll <= target) {
+      this.resolveEncounter(`Sneak succeeded (${roll} vs ${Math.round(target)}). Encounter bypassed.`);
+      this.run.score += 8;
+    } else {
+      this.lastRoll = `Sneak failed (${roll} vs ${Math.round(target)}).`;
+      this.startCombat(this.activeTile);
+    }
+  }
+
+  private startCombat(tile: BoardTile) {
+    if (!this.hero || !this.run) return;
+    this.activeTile = tile;
+    this.enemy = this.enemyFor(tile);
+    if (this.hero.id === 'hunter' && tile.encounter === 'ambush') this.enemy.hp = Math.max(1, this.enemy.hp - 3);
+    this.combatLog = [`${this.enemy.name} engages ${this.hero.name}.`];
+    this.screen = 'combat';
+    this.render();
+  }
+
+  private playerAttack() {
+    if (!this.hero || !this.enemy) return;
+    const roll = Phaser.Math.Between(1, 100);
+    const accuracy = this.hero.id === 'woodcutter' ? 68 : 78;
+    if (roll <= accuracy) {
+      const base = Math.round(this.hero.stats.might / 12 + (this.hero.stats.intellect > 80 ? 3 : 0));
+      const damage = Math.max(1, base + Phaser.Math.Between(0, 4) - this.enemy.armor);
+      this.enemy.hp -= damage;
+      this.combatLog.push(`Hit for ${damage} damage (${roll} vs ${accuracy}).`);
+      if (this.enemy.hp <= 0) {
+        this.winCombat();
+        return;
+      }
+    } else {
+      this.combatLog.push(`Missed (${roll} vs ${accuracy}).`);
+    }
+    this.enemyTurn();
+  }
+
+  private playerGuard() {
+    if (!this.hero) return;
+    this.hero.guarded = true;
+    this.combatLog.push('Guarded: next hit reduced.');
+    this.enemyTurn();
+  }
+
+  private useHerb() {
+    if (!this.hero || !this.run || this.run.herbs <= 0) return;
+    const heal = this.hero.id === 'herbalist' ? 11 : 9;
+    this.run.herbs -= 1;
+    this.hero.currentHp = Math.min(this.hero.maxHp, this.hero.currentHp + heal);
+    this.combatLog.push(`Used herb: healed ${heal} HP.`);
+    this.enemyTurn();
+  }
+
+  private fleeCombat() {
+    if (!this.hero || !this.run || !this.enemy) return;
+    const roll = Phaser.Math.Between(1, 100);
+    const target = this.hero.id === 'minstrel' ? 68 : 48;
+    if (roll <= target) {
+      this.combatLog.push(`Fled successfully (${roll} vs ${target}).`);
+      this.addLog(`Fled from ${this.enemy.name}.`);
+      this.screen = 'board';
+      this.enemy = undefined;
+      this.render();
+    } else {
+      this.combatLog.push(`Failed to flee (${roll} vs ${target}).`);
+      this.enemyTurn();
+    }
+  }
+
+  private enemyTurn() {
+    if (!this.hero || !this.enemy || !this.run) return;
+    let damage = Math.max(1, this.enemy.damage - this.hero.armor);
+    if (this.hero.guarded) {
+      damage = Math.max(0, damage - (this.hero.id === 'blacksmith' ? 6 : 3));
+      this.hero.guarded = false;
+    }
+    this.hero.currentHp -= damage;
+    this.combatLog.push(`${this.enemy.name} hits for ${damage}.`);
+    if (this.hero.currentHp <= 0) {
+      this.hero.currentHp = 0;
+      this.addLog(`${this.hero.name} was defeated by ${this.enemy.name}.`);
+      this.screen = 'summary';
+    }
+    this.render();
+  }
+
+  private winCombat() {
+    if (!this.enemy || !this.run || !this.activeTile) return;
+    this.run.gold += this.enemy.rewardGold;
+    this.run.score += this.activeTile.encounter === 'boss' ? 100 : 25;
+    this.activeTile.resolved = true;
+    this.addLog(`Defeated ${this.enemy.name}; gained ${this.enemy.rewardGold} gold.`);
+    const bossWon = this.activeTile.encounter === 'boss';
+    this.enemy = undefined;
+    this.screen = bossWon ? 'summary' : 'board';
+    this.render();
+  }
+
+  private resolveEncounter(message: string) {
+    if (this.activeTile) this.activeTile.resolved = true;
+    this.addLog(message);
+    this.screen = 'board';
+    this.render();
+  }
+
+  private enemyFor(tile: BoardTile): Enemy {
+    if (tile.encounter === 'boss') return { id: 'captain', name: 'Tyrant Captain', hp: 34, maxHp: 34, armor: 3, damage: 9, color: 0xc94c3f, note: 'Boss', rewardGold: 35 };
+    if (tile.terrain === 'lava') return { id: 'ashling', name: 'Ashling Brute', hp: 24, maxHp: 24, armor: 2, damage: 8, color: 0xd97145, note: 'Burning', rewardGold: 18 };
+    if (tile.terrain === 'ruin') return { id: 'bone', name: 'Bone Archer', hp: 16, maxHp: 16, armor: 1, damage: 6, color: 0xe4e0ca, note: 'Ranged', rewardGold: 12 };
+    return { id: 'goblin', name: 'Goblin Guard', hp: 18, maxHp: 18, armor: 1, damage: 6, color: 0xb7d567, note: 'Patrol', rewardGold: 10 };
+  }
+
+  private addLog(line: string) {
+    if (!this.run) return;
+    this.run.log.push(line);
+  }
+
+  private heroClass(id: string) {
+    return heroClasses.find((hero) => hero.id === id) ?? heroClasses[0];
+  }
+
+  private encounterTitle(kind: EncounterKind) {
+    return kind === 'shop' ? 'Roadside Merchant' : kind === 'skill' ? 'Hazard Check' : kind === 'boss' ? 'Boss Encounter' : kind === 'shrine' ? 'Old Shrine' : 'Ambush';
+  }
+
+  private drawTinyStats(hero: HeroClass, x: number, y: number) {
+    const entries: [StatKey, string][] = [['might', 'MGT'], ['awareness', 'AWR'], ['intellect', 'INT'], ['vitality', 'VIT'], ['speed', 'SPD'], ['luck', 'LCK']];
+    entries.forEach(([key, label], index) => {
+      const yy = y + index * 10;
+      const value = hero.stats[key];
       const g = this.add.graphics();
       this.layer.add(g);
-      g.fillStyle(index === 0 ? 0x3c3220 : 0x151c2b, 1).fillRoundedRect(xx, y, 132, 46, 10);
-      g.lineStyle(1, index === 0 ? theme.brightGold : 0x35445f, 1).strokeRoundedRect(xx, y, 132, 46, 10);
-      this.layer.add(text(this, xx + 11, y + 14, action, 12, '#f1f5ff'));
+      g.fillStyle(0x070a11, 0.7).fillRoundedRect(x + 42, yy + 1, 120, 5, 3);
+      g.fillStyle(value >= 80 ? theme.gold : 0x617095, 0.95).fillRoundedRect(x + 42, yy + 1, Math.round(value * 1.2), 5, 3);
+      this.layer.add(text(this, x, yy - 3, label, 8, '#8994ac'));
     });
-  }
-
-  private drawRunPanel(x: number, y: number) {
-    this.drawPanel(x, y, 292, 518, 'Run State');
-    this.layer.add(text(this, x + 24, y + 62, 'World Pressure', 12, '#d5c185'));
-    const g = this.add.graphics();
-    this.layer.add(g);
-    g.fillStyle(0x06080d, 1).fillRoundedRect(x + 24, y + 88, 244, 18, 9);
-    g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 88, 154, 18, 9);
-    this.layer.add(text(this, x + 24, y + 116, 'Dawn III · patrols spread after 2 turns', 12, theme.muted));
-
-    this.layer.add(text(this, x + 24, y + 158, 'Party', 12, '#d5c185'));
-    this.party.forEach((member, index) => {
-      const yy = y + 188 + index * 72;
-      g.fillStyle(index === this.selectedPartyIndex ? 0x252034 : 0x0d121d, 1).fillRoundedRect(x + 20, yy, 252, 56, 10);
-      g.lineStyle(1, index === this.selectedPartyIndex ? theme.brightGold : 0x303a55, 0.9).strokeRoundedRect(x + 20, yy, 252, 56, 10);
-      g.fillStyle(member.color, 1).fillCircle(x + 44, yy + 28, 12);
-      this.layer.add(text(this, x + 66, yy + 10, member.name, 15, theme.ink, 'Georgia, serif'));
-      this.layer.add(text(this, x + 66, yy + 31, `HP ${member.currentHp}/${member.hp} · AR ${member.armor} · ${member.weapon}`, 11, theme.muted));
-    });
-
-    this.layer.add(text(this, x + 24, y + 428, 'Controls', 12, '#d5c185'));
-    this.layer.add(text(this, x + 24, y + 454, 'TAB select hero · click board tile to move\nSPACE toggles board/combat · ESC menu', 12, theme.muted));
-  }
-
-  private drawMiniBoardPreview(x: number, y: number) {
-    const g = this.add.graphics();
-    this.layer.add(g);
-    g.fillStyle(0x101521, 0.95).fillRoundedRect(x, y, 440, 244, 18);
-    g.lineStyle(1, theme.gold, 0.38).strokeRoundedRect(x, y, 440, 244, 18);
-    const ox = x + 220;
-    const oy = y + 84;
-    for (let r = 0; r < 3; r++) {
-      for (let q = 0; q < 4; q++) {
-        const p = iso(q, r, ox, oy);
-        const points = diamond(p.x, p.y, 70, 35);
-        const palette = terrainPalette[(q + r) % 5 === 0 ? 'town' : (q + r) % 3 === 0 ? 'forest' : (q + r) % 4 === 0 ? 'ruin' : 'road'];
-        g.fillStyle(palette.top, 1).fillPoints(points, true);
-        g.lineStyle(1, palette.stroke, 0.8).strokePoints(points, true);
-      }
-    }
-    this.layer.add(text(this, x + 32, y + 28, 'From demo to playable loop', 25, theme.ink, 'Georgia, serif'));
-    this.layer.add(text(this, x + 34, y + 68, 'First real screens: main menu and hero selection.\nNext: run creation, movement turns, encounters, combat resolution.', 14, theme.muted).setWordWrapWidth(360));
   }
 
   private drawPanel(x: number, y: number, w: number, h: number, title: string) {
@@ -649,40 +821,21 @@ class GameScene extends Phaser.Scene {
     g.lineStyle(1, theme.gold, 0.8).strokeCircle(cx, y, 14);
   }
 
-  private createPartyFromSelection() {
-    const selectedHeroes = heroClasses.filter((hero) => this.selectedHeroIds.has(hero.id));
-    this.party = selectedHeroes.map((hero, index) => ({
-      ...hero,
-      currentHp: hero.hp,
-      x: index === 0 ? 0 : index === 1 ? 1 : 0,
-      y: index === 2 ? 1 : 0,
-    }));
-    this.selectedPartyIndex = 0;
-  }
-
-  private ensureDefaultParty() {
-    if (this.party.length) return;
-    this.selectedHeroIds = new Set(['blacksmith', 'hunter', 'scholar']);
-    this.createPartyFromSelection();
-  }
-
-  private combatUnitsFromParty(): CombatUnit[] {
-    const heroes = this.party.map((member, index) => ({
-      name: member.name,
-      kind: 'hero' as const,
-      hp: member.currentHp,
-      maxHp: member.hp,
-      row: index,
-      col: index === 0 ? 0 : 1,
-      color: member.color,
-      note: member.role.split(',')[0],
-    }));
-    return [
-      ...heroes,
-      { name: 'Goblin Guard', kind: 'enemy', hp: 18, maxHp: 18, row: 1, col: 3, color: 0xb7d567, note: 'Armor 2' },
-      { name: 'Hex Witch', kind: 'enemy', hp: 14, maxHp: 14, row: 0, col: 4, color: 0xc576d9, note: 'Curse' },
-      { name: 'Bone Archer', kind: 'enemy', hp: 12, maxHp: 12, row: 2, col: 4, color: 0xe4e0ca, note: 'Back row' },
-    ];
+  private drawMiniBoardPreview(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x101521, 0.95).fillRoundedRect(x, y, 440, 244, 18);
+    g.lineStyle(1, theme.gold, 0.38).strokeRoundedRect(x, y, 440, 244, 18);
+    const ox = x + 220;
+    const oy = y + 84;
+    for (let r = 0; r < 3; r++) for (let q = 0; q < 4; q++) {
+      const p = iso(q, r, ox, oy);
+      const palette = terrainPalette[(q + r) % 5 === 0 ? 'town' : (q + r) % 3 === 0 ? 'forest' : (q + r) % 4 === 0 ? 'ruin' : 'road'];
+      g.fillStyle(palette.top, 1).fillPoints(diamond(p.x, p.y, 70, 35), true);
+      g.lineStyle(1, palette.stroke, 0.8).strokePoints(diamond(p.x, p.y, 70, 35), true);
+    }
+    this.layer.add(text(this, x + 32, y + 28, 'Playable vertical slice', 25, theme.ink, 'Georgia, serif'));
+    this.layer.add(text(this, x + 34, y + 68, 'One hero. One small board. Real turns, movement points, encounters, combat, rewards, failure, and a boss objective.', 14, theme.muted).setWordWrapWidth(360));
   }
 }
 
@@ -695,21 +848,11 @@ function combatIso(row: number, col: number) {
 }
 
 function diamond(x: number, y: number, w = TILE_W, h = TILE_H) {
-  return [
-    new Phaser.Math.Vector2(x, y - h / 2),
-    new Phaser.Math.Vector2(x + w / 2, y),
-    new Phaser.Math.Vector2(x, y + h / 2),
-    new Phaser.Math.Vector2(x - w / 2, y),
-  ];
+  return [new Phaser.Math.Vector2(x, y - h / 2), new Phaser.Math.Vector2(x + w / 2, y), new Phaser.Math.Vector2(x, y + h / 2), new Phaser.Math.Vector2(x - w / 2, y)];
 }
 
 function text(scene: Phaser.Scene, x: number, y: number, value: string, size: number, color: string, family = 'Inter, system-ui, sans-serif') {
-  return scene.add.text(x, y, value, {
-    fontFamily: family,
-    fontSize: `${size}px`,
-    color,
-    lineSpacing: 5,
-  });
+  return scene.add.text(x, y, value, { fontFamily: family, fontSize: `${size}px`, color, lineSpacing: 5 });
 }
 
 new Phaser.Game({
@@ -720,8 +863,5 @@ new Phaser.Game({
   pixelArt: false,
   roundPixels: false,
   scene: GameScene,
-  scale: {
-    mode: Phaser.Scale.FIT,
-    autoCenter: Phaser.Scale.CENTER_BOTH,
-  },
+  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
 });
