@@ -86,9 +86,9 @@ type RunState = {
 
 const WIDTH = 1280;
 const HEIGHT = 760;
-const TILE_W = 146;
-const TILE_H = 74;
-const BOARD_ORIGIN = { x: 610, y: 162 };
+const TILE_W = 112;
+const TILE_H = 64;
+const BOARD_ORIGIN = { x: 610, y: 118 };
 const COMBAT_ORIGIN = { x: 555, y: 268 };
 const START = { x: 0, y: 0 };
 
@@ -495,12 +495,11 @@ class GameScene extends Phaser.Scene {
 
   private drawBoardScreen() {
     if (!this.hero || !this.run) this.createRun(false);
-    this.drawBoardMap(34, 82);
+    this.drawBoardMap(18, 18);
     this.drawBoardHeader();
-    this.drawRunPanel(920, 104);
-    this.drawBoardLegend(44, 626);
-    this.drawButton(920, 624, 146, 40, 'End Turn (E)', () => this.endTurn());
-    this.drawButton(1080, 624, 146, 40, 'Menu', () => {
+    this.drawRunPanel(932, 548);
+    this.drawButton(920, 696, 146, 36, 'End Turn (E)', () => this.endTurn());
+    this.drawButton(1080, 696, 146, 36, 'Menu', () => {
       this.screen = 'menu';
       this.render();
     });
@@ -572,14 +571,14 @@ class GameScene extends Phaser.Scene {
   private drawBoardMap(x: number, y: number) {
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x0d131f, 0.98).fillRoundedRect(x, y, 1212, 614, 20);
-    g.lineStyle(1, theme.gold, 0.42).strokeRoundedRect(x, y, 1212, 614, 20);
-    g.fillStyle(0x05070d, 0.48).fillEllipse(622, 494, 940, 250);
-    g.fillStyle(0x111b2b, 0.48).fillEllipse(610, 358, 760, 230);
+    g.fillGradientStyle(0x311510, 0x4b2116, 0x5b2a1a, 0x1a0d0b, 1);
+    g.fillRoundedRect(x, y, 1244, 724, 12);
+    g.fillStyle(0x1e0d11, 0.3).fillEllipse(622, 448, 1080, 420);
     this.drawBoardPath();
     [...this.tiles].sort((a, b) => (a.q + a.r) - (b.q + b.r)).forEach((tile) => this.drawIsoTile(tile));
     this.drawBoardEvents();
     if (this.hero) this.drawHeroToken(this.hero);
+    this.drawFogClouds();
   }
 
   private drawIsoTile(tile: BoardTile) {
@@ -587,24 +586,26 @@ class GameScene extends Phaser.Scene {
     const palette = terrainPalette[tile.terrain];
     const g = this.add.graphics();
     this.layer.add(g);
-    const points = diamond(p.x, p.y);
+    const points = hexPoints(p.x, p.y, 54, 32);
     const reachable = this.hero ? this.isReachable(tile) : false;
     const occupied = !!this.hero && tile.q === this.hero.x && tile.r === this.hero.y;
-    const dim = !reachable && !occupied && this.run?.movesLeft === 0;
-    g.fillStyle(palette.side, dim ? 0.55 : 1).fillPoints([
-      new Phaser.Math.Vector2(points[1].x, points[1].y),
-      new Phaser.Math.Vector2(points[2].x, points[2].y),
-      new Phaser.Math.Vector2(points[2].x, points[2].y + 24),
-      new Phaser.Math.Vector2(points[1].x, points[1].y + 24),
-    ], true);
-    g.fillStyle(palette.top, tile.resolved ? 0.58 : dim ? 0.5 : 1).fillPoints(points, true);
-    g.lineStyle(reachable ? 4 : occupied ? 3 : 2, reachable ? theme.brightGold : occupied ? 0xffffff : palette.stroke, reachable || occupied ? 1 : 0.82).strokePoints(points, true);
+    const h = hashCoord(tile.q, tile.r);
+    const base = this.terrainBoardColor(tile.terrain, h);
+    const border = reachable ? theme.brightGold : occupied ? 0xffffff : tile.encounter !== 'none' && !tile.resolved ? this.poiColor(tile.encounter) : 0xc79a4c;
+
+    g.fillStyle(0x12090a, 0.55).fillPoints(hexPoints(p.x + 4, p.y + 7, 54, 32), true);
+    g.fillStyle(base, tile.resolved ? 0.72 : 0.96).fillPoints(points, true);
+    g.lineStyle(reachable ? 4 : occupied ? 3 : 1.5, border, reachable || occupied ? 1 : 0.75).strokePoints(points, true);
+
     if (reachable) {
-      g.fillStyle(theme.brightGold, 0.16).fillPoints(points, true);
-      g.fillStyle(theme.brightGold, 1).fillCircle(p.x, p.y + 7, 4);
+      g.fillStyle(theme.brightGold, 0.18).fillPoints(points, true);
+      g.lineStyle(2, 0xffffff, 0.78).strokePoints(hexPoints(p.x, p.y, 42, 24), true);
     }
-    this.layer.add(text(this, p.x - 8, p.y - 25, palette.icon, 24, '#10131a'));
-    if (tile.label) this.drawLocationLabel(tile, p.x, p.y + 46);
+    if (!tile.resolved && tile.encounter === 'ambush') g.lineStyle(2, 0x9b1018, 0.72).strokePoints(hexPoints(p.x, p.y, 45, 26), true);
+    if (!tile.resolved && tile.encounter === 'skill') this.layer.add(text(this, p.x, p.y - 8, '?', 20, '#e6c46f').setOrigin(0.5).setShadow(1, 1, '#24100c', 2));
+
+    this.drawTerrainDoodads(tile, p.x, p.y, h);
+    if (tile.label && tile.encounter !== 'boss') this.drawLocationLabel(tile, p.x, p.y + 34);
     const hit = this.add.zone(p.x, p.y, TILE_W, TILE_H).setOrigin(0.5).setInteractive({ useHandCursor: reachable });
     hit.on('pointerdown', () => this.moveTo(tile));
     this.layer.add(hit);
@@ -613,9 +614,15 @@ class GameScene extends Phaser.Scene {
   private drawBoardPath() {
     const g = this.add.graphics();
     this.layer.add(g);
-    g.lineStyle(5, theme.gold, 0.3);
-    const route = [this.boardPoint(0, 0), this.boardPoint(1, 1), this.boardPoint(2, 2), this.boardPoint(3, 3), this.boardPoint(4, 3)];
-    for (let i = 0; i < route.length - 1; i++) g.lineBetween(route[i].x, route[i].y, route[i + 1].x, route[i + 1].y);
+    g.lineStyle(1, 0x8d6a36, 0.16);
+    this.tiles.forEach((tile) => {
+      [[1, 0], [0, 1], [1, 1]].forEach(([dq, dr]) => {
+        if (!this.tiles.some((other) => other.q === tile.q + dq && other.r === tile.r + dr)) return;
+        const a = this.boardPoint(tile.q, tile.r);
+        const b = this.boardPoint(tile.q + dq, tile.r + dr);
+        g.lineBetween(a.x, a.y, b.x, b.y);
+      });
+    });
   }
 
   private drawBoardEvents() {
@@ -629,11 +636,13 @@ class GameScene extends Phaser.Scene {
     const p = this.boardPoint(hero.x, hero.y);
     const token = this.add.container(p.x, p.y);
     const g = this.add.graphics();
-    g.fillStyle(0x000000, 0.45).fillEllipse(0, -2, 48, 16);
-    g.fillStyle(hero.color, 1).fillCircle(0, -44, 22);
-    g.lineStyle(4, theme.brightGold, 1).strokeCircle(0, -44, 22);
-    g.lineStyle(1, 0xffffff, 0.75).strokeCircle(0, -44, 15);
-    const label = text(this, -36, -88, hero.name, 12, '#f9f3df').setShadow(1, 1, '#000', 2);
+    g.fillStyle(0x0e0907, 0.5).fillEllipse(0, 8, 44, 16);
+    g.lineStyle(3, 0xffffff, 1).strokePoints(hexPoints(0, 0, 50, 29), true);
+    g.fillStyle(0xffffff, 0.08).fillPoints(hexPoints(0, 0, 50, 29), true);
+    g.fillStyle(hero.color, 1).fillCircle(0, -28, 13);
+    g.fillStyle(0x2a170f, 1).fillRoundedRect(-7, -15, 14, 26, 4);
+    g.lineStyle(2, theme.brightGold, 0.9).strokeCircle(0, -28, 14);
+    const label = text(this, -26, -58, hero.name, 11, '#f9f3df').setShadow(1, 1, '#000', 2);
     token.add([g, label]);
     this.heroToken = token;
     this.layer.add(token);
@@ -641,7 +650,7 @@ class GameScene extends Phaser.Scene {
 
   private drawRunPanel(x: number, y: number) {
     if (!this.hero || !this.run) return;
-    this.drawPanel(x, y, 306, 248, 'Run State');
+    this.drawPanel(x, y, 306, 140, 'Run State');
     this.layer.add(text(this, x + 24, y + 62, `Day ${this.run.day} · Turn ${this.run.turn} · Moves ${this.run.movesLeft}`, 15, theme.ink));
     const g = this.add.graphics();
     this.layer.add(g);
@@ -650,18 +659,19 @@ class GameScene extends Phaser.Scene {
     this.layer.add(text(this, x + 24, y + 120, `Depth ${this.heroDepth()} · Danger tier ${this.run.danger}/10`, 11, theme.muted));
     this.layer.add(text(this, x + 24, y + 148, `${this.hero.name} · HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.totalArmor()}`, 13, '#d5c185'));
     this.layer.add(text(this, x + 24, y + 174, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Bombs ${this.run.bombs} · Score ${this.run.score}`, 12, theme.muted));
-    this.layer.add(text(this, x + 24, y + 196, `${this.hero.equipment.weaponName}: PWR ${this.hero.equipment.power} · ACC ${this.hero.equipment.accuracy}%`, 11, '#9eaac7'));
-    this.layer.add(text(this, x + 24, y + 218, this.run.quest, 10, '#cbb783').setWordWrapWidth(250));
+
   }
 
   private drawBoardHeader() {
     if (!this.run) return;
     const g = this.add.graphics();
     this.layer.add(g);
-    g.fillStyle(0x080b12, 0.78).fillRoundedRect(44, 38, 1182, 46, 14);
-    g.lineStyle(1, theme.gold, 0.28).strokeRoundedRect(44, 38, 1182, 46, 14);
-    this.layer.add(text(this, 66, 47, 'Expedition Board', 28, '#f2d58a', 'Georgia, serif'));
-    this.layer.add(text(this, 330, 55, this.boardNotice, 14, theme.muted).setWordWrapWidth(560));
+    g.fillStyle(0x141018, 0.78).fillRoundedRect(8, 18, 330, 46, 8);
+    g.lineStyle(1, 0xffffff, 0.35).strokeRoundedRect(8, 18, 330, 46, 8);
+    this.layer.add(text(this, 18, 23, 'Story Quests', 15, '#f4eee5', 'Georgia, serif'));
+    this.layer.add(text(this, 18, 43, `▸ ${this.run.quest}`, 11, '#e8cf70').setWordWrapWidth(300));
+    g.fillStyle(0x141018, 0.55).fillRoundedRect(356, 20, 520, 28, 8);
+    this.layer.add(text(this, 370, 27, this.boardNotice, 12, '#f4eee5').setWordWrapWidth(492));
   }
 
   private drawBoardLegend(x: number, y: number) {
@@ -678,6 +688,65 @@ class GameScene extends Phaser.Scene {
     this.layer.add(text(this, x + 598, y + 14, 'Gold outlines = reachable. New tiles appear as you travel.', 12, '#cbb783').setWordWrapWidth(206));
   }
 
+  private terrainBoardColor(terrain: Terrain, h: number) {
+    const variants: Record<Terrain, number[]> = {
+      road: [0x7a3d25, 0x8b4b2b, 0x6e3322],
+      forest: [0x703022, 0x8a3c2a, 0x5f2b21],
+      swamp: [0x4c3f2b, 0x5b4b31, 0x423827],
+      mountain: [0x6b5140, 0x7a5b45, 0x554338],
+      ruin: [0x654036, 0x753d34, 0x53312d],
+      town: [0x875235, 0x9b6239, 0x704026],
+      lava: [0x5d1820, 0x6f1d25, 0x48141a],
+    };
+    const list = variants[terrain];
+    return list[h % list.length];
+  }
+
+  private drawTerrainDoodads(tile: BoardTile, x: number, y: number, h: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    if (tile.terrain === 'forest') {
+      for (let i = 0; i < 2 + (h % 3); i++) this.drawTinyTree(x - 28 + ((h >> i) % 56), y - 22 + ((h >> (i + 3)) % 34));
+    } else if (tile.terrain === 'mountain') {
+      g.fillStyle(0x9b7a5c, 0.75).fillTriangle(x - 20, y + 6, x, y - 24, x + 20, y + 6);
+      g.fillStyle(0xd7c0a2, 0.55).fillTriangle(x - 6, y - 14, x, y - 24, x + 7, y - 12);
+    } else if (tile.terrain === 'lava') {
+      g.lineStyle(2, 0xff6b37, 0.6).lineBetween(x - 30, y, x + 28, y - 10);
+      g.lineStyle(1, 0xffb347, 0.5).lineBetween(x - 12, y + 14, x + 20, y + 4);
+    } else if (tile.terrain === 'swamp') {
+      g.fillStyle(0x9da35b, 0.28).fillEllipse(x - 18, y + 2, 32, 10);
+      g.fillStyle(0x9da35b, 0.24).fillEllipse(x + 20, y - 8, 24, 8);
+    } else if (tile.terrain === 'ruin') {
+      g.fillStyle(0xb99a72, 0.55).fillRect(x - 20, y - 12, 8, 26);
+      g.fillRect(x + 14, y - 6, 8, 20);
+    }
+  }
+
+  private drawTinyTree(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x462015, 1).fillRect(x - 2, y + 8, 4, 16);
+    g.fillStyle(0x9b3f2d, 0.95).fillCircle(x, y, 13);
+    g.fillStyle(0xc05a36, 0.75).fillCircle(x - 5, y - 5, 9);
+  }
+
+  private drawFogClouds() {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    const clusters = [
+      [18, 60, 17], [90, 28, 14], [1160, 54, 18], [1210, 130, 16], [66, 704, 13], [1168, 704, 15],
+      [1120, 238, 14], [112, 170, 12], [610, 32, 11], [1240, 400, 14], [20, 416, 12],
+    ];
+    clusters.forEach(([cx, cy, count]) => {
+      for (let i = 0; i < count; i++) {
+        const ox = Math.cos(i * 1.7) * (18 + (i % 4) * 10);
+        const oy = Math.sin(i * 1.3) * (14 + (i % 3) * 8);
+        g.fillStyle(0xe6e1df, 0.86).fillCircle(cx + ox, cy + oy, 24 + (i % 5) * 5);
+        g.fillStyle(0xffffff, 0.2).fillCircle(cx + ox - 7, cy + oy - 8, 13 + (i % 4));
+      }
+    });
+  }
+
   private drawLocationLabel(tile: BoardTile, x: number, y: number) {
     const g = this.add.graphics();
     this.layer.add(g);
@@ -689,21 +758,24 @@ class GameScene extends Phaser.Scene {
   }
 
   private drawPoiMarker(tile: BoardTile, x: number, y: number) {
-    const offset = this.poiOffset(tile);
-    const px = x + offset.x;
-    const py = y + offset.y;
     const color = this.poiColor(tile.encounter);
     const g = this.add.graphics();
     this.layer.add(g);
-    g.lineStyle(2, color, 0.5).lineBetween(x, y - 30, px, py + 18);
-    const label = this.poiLabel(tile.encounter);
-    const w = tile.encounter === 'boss' ? 112 : 92;
-    g.fillStyle(0x05070d, 0.96).fillRoundedRect(px - w / 2, py - 20, w, 40, 12);
-    g.lineStyle(2, color, 1).strokeRoundedRect(px - w / 2, py - 20, w, 40, 12);
-    g.fillStyle(color, 0.18).fillRoundedRect(px - w / 2 + 3, py - 17, w - 6, 34, 10);
-    this.drawPoiGlyph(tile.encounter, px - w / 2 + 18, py + 2, 0.95);
-    this.layer.add(text(this, px - w / 2 + 34, py - 8, label, 12, '#f7efd9').setShadow(1, 1, '#000', 2));
-    if (tile.label && tile.encounter === 'boss') this.layer.add(text(this, px - w / 2 + 34, py + 6, tile.label, 9, '#cbb783').setShadow(1, 1, '#000', 2));
+    if (tile.encounter === 'ambush' || tile.encounter === 'boss') {
+      g.fillStyle(0x2b0b0d, 0.72).fillCircle(x, y - 22, tile.encounter === 'boss' ? 18 : 13);
+      g.lineStyle(3, color, 0.9).strokeCircle(x, y - 22, tile.encounter === 'boss' ? 20 : 15);
+      this.layer.add(text(this, x, y - 34, tile.encounter === 'boss' ? '⚔' : '!', tile.encounter === 'boss' ? 22 : 18, '#ffb1a9').setOrigin(0.5).setShadow(1, 1, '#000', 2));
+    } else if (tile.encounter === 'shop') {
+      g.fillStyle(0xf0e3ca, 1).fillRoundedRect(x - 22, y - 42, 44, 30, 6);
+      g.fillStyle(0xc94c4c, 1).fillRect(x - 24, y - 42, 48, 10);
+      g.lineStyle(2, color, 0.9).strokeRoundedRect(x - 22, y - 42, 44, 30, 6);
+      this.layer.add(text(this, x, y - 37, '$', 14, '#1b1820').setOrigin(0.5));
+    } else if (tile.encounter === 'shrine') {
+      g.fillStyle(0x4edb76, 0.28).fillCircle(x, y - 22, 26);
+      g.fillStyle(0x102415, 0.9).fillCircle(x, y - 22, 15);
+      this.layer.add(text(this, x, y - 33, '+', 22, '#9cffb4').setOrigin(0.5).setShadow(1, 1, '#000', 2));
+    }
+    if (tile.encounter === 'boss' && tile.label) this.layer.add(text(this, x - 48, y - 64, tile.label, 11, '#ffd7a3').setShadow(1, 1, '#000', 2));
   }
 
   private drawPoiGlyph(kind: EncounterKind, x: number, y: number, scale: number) {
@@ -1245,7 +1317,7 @@ class GameScene extends Phaser.Scene {
   private boardPoint(q: number, r: number) {
     const centerQ = this.hero?.x ?? 0;
     const centerR = this.hero?.y ?? 0;
-    return iso(q - centerQ, r - centerR, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 218);
+    return iso(q - centerQ, r - centerR, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 276);
   }
 
   private addLog(line: string) {
@@ -1333,6 +1405,17 @@ function boardPoint(q: number, r: number) {
 
 function combatIso(row: number, col: number) {
   return { x: COMBAT_ORIGIN.x + (col - row) * 54, y: COMBAT_ORIGIN.y + (col + row) * 28 };
+}
+
+function hexPoints(x: number, y: number, w = TILE_W, h = TILE_H) {
+  return [
+    new Phaser.Math.Vector2(x - w * 0.25, y - h / 2),
+    new Phaser.Math.Vector2(x + w * 0.25, y - h / 2),
+    new Phaser.Math.Vector2(x + w / 2, y),
+    new Phaser.Math.Vector2(x + w * 0.25, y + h / 2),
+    new Phaser.Math.Vector2(x - w * 0.25, y + h / 2),
+    new Phaser.Math.Vector2(x - w / 2, y),
+  ];
 }
 
 function diamond(x: number, y: number, w = TILE_W, h = TILE_H) {
