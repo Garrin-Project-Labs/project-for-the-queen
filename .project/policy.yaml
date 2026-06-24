@@ -1,0 +1,64 @@
+project:
+  id: "for-the-queen"
+  name: "For the queen"
+  repo: "Garrin-Project-Labs/project-for-the-queen"
+  sourceOfTruth: discord
+
+owner:
+  discordUserId: "180116757263024128"
+  label: "SDB"
+
+discord:
+  guildId: "1515020347425030245"
+  channelId: "1519226939725054002"
+  visibility: "public"
+  projectsCategoryId: "1516195966330343444"
+  projectCreationChannelId: "1516196374620799127"
+  roles:
+    viewer:
+      roleId: "1519226931881709600"
+      name: "for-the-queen-viewer"
+    contributor:
+      roleId: "1519226933995372595"
+      name: "for-the-queen-contributor"
+    maintainer:
+      roleId: "1519226935631417366"
+      name: "for-the-queen-maintainer"
+
+authorization:
+  allowViewerQuestions: true
+  allowContributorsToClaimTasks: true
+  requireMaintainerForPlanApproval: true
+  requireMaintainerForDocsAndMemory: true
+  requireOwnerForInvites: false
+  requireOwnerForRepoCreation: true
+  requireOwnerForArchiveDelete: true
+  requireGlobalOwnerForGatewayConfig: true
+
+publishing:
+  githubPages: true
+  githubPagesStatus: "pending"
+  githubPagesUrl: "https://garrin-project-labs.github.io/project-for-the-queen/"
+  githubPagesSource: "main:/docs"
+  publicDemos: true
+
+starter:
+  preset: "empty"
+
+workflow:
+  taskThreads: automatic
+  taskCommandStyle: natural_language
+  friendlyTaskName: quest
+  requireMention: true
+  jamMode: temporary_ambient
+  branchNaming: "task/<id>-<slug>"
+  requirePlanApproval: true
+  requireMaintainerForDocsAndMemory: true
+  allowBotMergeWithMaintainerApproval: true
+  githubIssues: false
+
+audit:
+  level: medium
+  path: ".project/audit/events.jsonl"
+  includePrLinks: true
+  includeDiscordThreadLinks: true
