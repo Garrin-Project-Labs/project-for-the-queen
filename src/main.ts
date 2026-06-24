@@ -279,23 +279,178 @@ class GameScene extends Phaser.Scene {
   }
 
   private drawMainMenu() {
-    this.drawOrnament(640, 88, 540);
-    this.layer.add(text(this, 640, 104, 'FOR THE QUEEN', 58, theme.ink, 'Georgia, serif').setOrigin(0.5));
-    this.layer.add(text(this, 640, 158, 'single-hero exploration tactics run', 18, '#b9a370').setOrigin(0.5));
-    this.drawMiniBoardPreview(142, 224);
-    this.drawPanel(708, 218, 394, 286, 'Current Playable Loop');
-    ['Pick and control one hero', 'Create a fresh run', 'Spend movement points on the board', 'Trigger shops, shrines, skill checks, ambushes', 'Resolve turn-based combat', 'Explore outward, find quests, defeat harder fights'].forEach((item, i) => {
-      this.layer.add(text(this, 742, 270 + i * 32, `✦ ${item}`, 15, i === 0 ? '#f2d58a' : theme.muted));
+    this.drawTavernBackdrop();
+    this.drawGameLogo(650, 104);
+    this.drawMenuList(76, 342);
+    this.layer.add(text(this, 74, 714, 'Logged in as SDB', 12, '#d9d0bd'));
+  }
+
+  private drawTavernBackdrop() {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillGradientStyle(0x130806, 0x220d08, 0x4a2818, 0x170b08, 1);
+    g.fillRect(18, 18, WIDTH - 36, HEIGHT - 36);
+
+    // Back wall, beams, banners.
+    g.fillStyle(0x2c1710, 0.95).fillRect(28, 28, 1224, 300);
+    for (let i = 0; i < 7; i++) {
+      g.fillStyle(i % 2 ? 0x1b0d09 : 0x3a1f13, 0.7).fillRect(28 + i * 190, 28, 96, 320);
+    }
+    g.fillStyle(0x35130f, 0.92).fillRoundedRect(188, 56, 118, 258, 8);
+    g.fillStyle(0x5b1511, 0.95).fillRoundedRect(206, 66, 82, 210, 6);
+    g.lineStyle(3, 0xb98645, 0.45).strokeRoundedRect(206, 66, 82, 210, 6);
+    g.fillStyle(0x35130f, 0.92).fillRoundedRect(902, 54, 126, 254, 8);
+    g.fillStyle(0x5b1511, 0.95).fillRoundedRect(924, 66, 82, 204, 6);
+    g.lineStyle(3, 0xb98645, 0.45).strokeRoundedRect(924, 66, 82, 204, 6);
+
+    // Shelf and props.
+    g.fillStyle(0x4b2818, 1).fillRoundedRect(414, 116, 380, 24, 4);
+    g.fillStyle(0x2a130d, 1).fillRoundedRect(430, 142, 340, 28, 4);
+    this.drawBookStack(612, 72);
+    this.drawSkull(548, 92);
+    this.drawChest(996, 304);
+    this.drawCandles(70, 282, 0.9);
+    this.drawCandles(800, 388, 1.1);
+    this.drawCandles(1052, 356, 1.0);
+
+    // Table and parchment map.
+    g.fillStyle(0x3d2115, 1).fillRoundedRect(126, 428, 1058, 248, 18);
+    g.fillStyle(0x22120c, 0.8).fillRoundedRect(102, 652, 1110, 70, 10);
+    g.fillStyle(0x9b6735, 0.25).fillEllipse(650, 570, 970, 190);
+    this.drawParchmentMap(360, 436);
+    this.drawCoins(804, 600);
+    this.drawKey(720, 638);
+    this.drawScroll(252, 608);
+
+    // Menu separator line.
+    g.lineStyle(2, 0xd8c083, 0.58).lineBetween(0, 334, 430, 334);
+    g.fillStyle(0x000000, 0.24).fillRect(18, 18, WIDTH - 36, HEIGHT - 36);
+    g.fillStyle(0x000000, 0.34).fillRect(18, 330, 392, 384);
+  }
+
+  private drawGameLogo(x: number, y: number) {
+    this.layer.add(text(this, x, y, 'FOR THE', 34, '#efe6d6', 'Georgia, serif').setOrigin(0.5).setShadow(3, 4, '#130806', 5));
+    this.layer.add(text(this, x, y + 76, 'QUEEN', 78, '#f6eee2', 'Georgia, serif').setOrigin(0.5).setShadow(4, 5, '#130806', 7));
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0xc79a4c, 0.92).fillRoundedRect(x - 178, y + 28, 58, 118, 8);
+    g.fillStyle(0xf0cc7c, 0.6).fillRoundedRect(x - 166, y + 36, 34, 100, 7);
+    g.lineStyle(3, 0x6f4b2c, 0.9).strokeRoundedRect(x - 178, y + 28, 58, 118, 8);
+    g.lineStyle(3, 0xe8d2a0, 0.75).lineBetween(x + 206, y + 12, x + 206, y + 126);
+    g.fillStyle(0xe8d2a0, 0.9).fillCircle(x + 206, y + 6, 5);
+    g.fillStyle(0xe8d2a0, 0.9).fillTriangle(x + 198, y + 126, x + 214, y + 126, x + 206, y + 146);
+  }
+
+  private drawMenuList(x: number, y: number) {
+    const items = [
+      { label: 'Campaign', note: '!', action: () => { this.screen = 'heroes'; this.render(); }, primary: true },
+      { label: 'Quick Start', note: '', action: () => { this.selectedHeroId = 'hunter'; this.createRun(); }, primary: false },
+      { label: 'Hero Roster', note: '!', action: () => { this.screen = 'heroes'; this.render(); }, primary: false },
+      { label: 'Encyclopedia', note: '', action: () => undefined, primary: false },
+      { label: 'Settings', note: '', action: () => undefined, primary: false },
+      { label: 'Credits', note: '', action: () => undefined, primary: false },
+    ];
+    items.forEach((item, index) => {
+      const yy = y + index * 48;
+      const color = item.primary ? '#fff5d8' : '#f2eadb';
+      if (item.primary) {
+        const g = this.add.graphics();
+        this.layer.add(g);
+        g.fillStyle(0x000000, 0.28).fillRoundedRect(x - 16, yy - 8, 250, 42, 8);
+        g.lineStyle(1, theme.gold, 0.45).strokeRoundedRect(x - 16, yy - 8, 250, 42, 8);
+        this.layer.add(text(this, x - 30, yy + 2, '⚔', 22, '#f2d58a').setOrigin(0.5, 0));
+      }
+      this.layer.add(text(this, x, yy, item.label, 32, color, 'Georgia, serif').setShadow(2, 3, '#120907', 4));
+      if (item.note) this.layer.add(text(this, x + 194, yy + 8, item.note, 18, '#f2d58a').setShadow(1, 2, '#120907', 3));
+      const zone = this.add.zone(x - 42, yy - 8, 286, 44).setOrigin(0).setInteractive({ useHandCursor: true });
+      zone.on('pointerdown', item.action);
+      this.layer.add(zone);
     });
-    this.drawButton(498, 532, 284, 58, 'New Run', () => {
-      this.screen = 'heroes';
-      this.render();
-    }, true);
-    this.drawButton(498, 606, 284, 46, 'Quick Start Hunter', () => {
-      this.selectedHeroId = 'hunter';
-      this.createRun();
+  }
+
+  private drawParchmentMap(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0xc79b62, 1).fillRoundedRect(x, y, 620, 168, 16);
+    g.fillStyle(0xe0bd7c, 0.9).fillRoundedRect(x + 18, y + 14, 584, 140, 12);
+    g.lineStyle(2, 0x7f4e27, 0.5).strokeRoundedRect(x + 18, y + 14, 584, 140, 12);
+    for (let i = 0; i < 8; i++) {
+      const px = x + 64 + i * 66;
+      const py = y + 50 + ((i * 31) % 78);
+      g.lineStyle(1, 0x8a5d32, 0.5).strokeCircle(px, py, 12 + (i % 3) * 4);
+      g.fillStyle(0x8a5d32, 0.35).fillCircle(px + 18, py + 6, 3);
+    }
+    g.lineStyle(2, 0x8a5d32, 0.45);
+    g.beginPath();
+    g.moveTo(x + 60, y + 118);
+    g.lineTo(x + 162, y + 74);
+    g.lineTo(x + 268, y + 104);
+    g.lineTo(x + 410, y + 62);
+    g.lineTo(x + 552, y + 112);
+    g.strokePath();
+  }
+
+  private drawCandles(x: number, y: number, scale: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    for (let i = 0; i < 3; i++) {
+      const xx = x + i * 18 * scale;
+      g.fillStyle(0xf7e4bd, 1).fillRoundedRect(xx, y - 48 * scale + i * 4, 14 * scale, 48 * scale - i * 4, 4);
+      g.fillStyle(0xffb845, 0.92).fillEllipse(xx + 7 * scale, y - 54 * scale + i * 4, 9 * scale, 18 * scale);
+      g.fillStyle(0xffef9f, 0.8).fillEllipse(xx + 7 * scale, y - 56 * scale + i * 4, 4 * scale, 8 * scale);
+    }
+  }
+
+  private drawBookStack(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    [0x6b231b, 0x8a5528, 0x4c1d18].forEach((color, i) => {
+      g.fillStyle(color, 1).fillRoundedRect(x + i * 10, y + i * 18, 116, 18, 4);
+      g.lineStyle(1, 0xd1a860, 0.35).strokeRoundedRect(x + i * 10, y + i * 18, 116, 18, 4);
     });
-    this.layer.add(text(this, 640, 716, 'Dark UI with gold accents · E ends turn · ESC returns to menu', 13, theme.dim).setOrigin(0.5));
+  }
+
+  private drawSkull(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0xd7c9b5, 0.88).fillCircle(x, y, 24);
+    g.fillStyle(0x211610, 0.9).fillCircle(x - 9, y - 4, 5);
+    g.fillCircle(x + 9, y - 4, 5);
+    g.fillRoundedRect(x - 12, y + 16, 24, 14, 4);
+  }
+
+  private drawChest(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0x3a2117, 1).fillRoundedRect(x, y, 150, 74, 14);
+    g.fillStyle(0x5d3923, 1).fillRoundedRect(x + 8, y + 8, 134, 52, 12);
+    g.lineStyle(4, 0xb8863e, 0.8).strokeRoundedRect(x + 8, y + 8, 134, 52, 12);
+    g.fillStyle(0xcda15a, 1).fillRoundedRect(x + 66, y + 30, 20, 22, 4);
+  }
+
+  private drawCoins(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    for (let i = 0; i < 12; i++) {
+      g.fillStyle(0xc49135, 1).fillEllipse(x + (i * 23) % 116, y + ((i * 19) % 54), 20, 8);
+      g.lineStyle(1, 0xf1d27a, 0.7).strokeEllipse(x + (i * 23) % 116, y + ((i * 19) % 54), 20, 8);
+    }
+  }
+
+  private drawKey(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.lineStyle(5, 0x1b1510, 1).strokeCircle(x, y, 15);
+    g.lineStyle(6, 0x1b1510, 1).lineBetween(x + 13, y, x + 112, y - 16);
+    g.lineStyle(4, 0x1b1510, 1).lineBetween(x + 88, y - 12, x + 92, y + 10);
+  }
+
+  private drawScroll(x: number, y: number) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(0xd0ad75, 1).fillRoundedRect(x, y, 118, 34, 14);
+    g.fillStyle(0xf0d59a, 1).fillRoundedRect(x + 14, y - 8, 82, 44, 12);
+    g.lineStyle(1, 0x8a5d32, 0.55).lineBetween(x + 30, y + 8, x + 88, y + 2);
   }
 
   private drawHeroSelect() {
