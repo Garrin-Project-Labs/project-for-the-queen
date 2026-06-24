@@ -22,12 +22,30 @@ type HeroClass = {
   stats: Record<StatKey, number>;
 };
 
+type Equipment = {
+  weaponName: string;
+  power: number;
+  accuracy: number;
+  armorBonus: number;
+};
+
+type LootItem = {
+  name: string;
+  kind: 'weapon' | 'armor' | 'trinket';
+  power?: number;
+  accuracy?: number;
+  armorBonus?: number;
+  description: string;
+};
+
 type PlayerHero = HeroClass & {
   currentHp: number;
   maxHp: number;
   guarded: boolean;
   x: number;
   y: number;
+  equipment: Equipment;
+  inventory: LootItem[];
 };
 
 type BoardTile = {
@@ -58,6 +76,7 @@ type RunState = {
   pressure: number;
   gold: number;
   herbs: number;
+  bombs: number;
   score: number;
   log: string[];
 };
@@ -211,6 +230,13 @@ const initialTiles: BoardTile[] = [
   { q: 4, r: 3, terrain: 'lava', label: 'Tyrant Captain', encounter: 'boss' },
 ];
 
+const lootTable: LootItem[] = [
+  { name: 'Mercenary Saber', kind: 'weapon', power: 2, accuracy: 4, description: '+2 power, +4% accuracy' },
+  { name: 'Ash-Hardened Mail', kind: 'armor', armorBonus: 1, description: '+1 armor' },
+  { name: 'Lucky Coin', kind: 'trinket', accuracy: 6, description: '+6% accuracy from better odds' },
+  { name: 'Heavy Pike', kind: 'weapon', power: 4, accuracy: -6, description: '+4 power, -6% accuracy' },
+];
+
 class GameScene extends Phaser.Scene {
   private screen: Screen = 'menu';
   private layer!: Phaser.GameObjects.Container;
@@ -302,8 +328,9 @@ class GameScene extends Phaser.Scene {
     this.layer.add(text(this, 940, 320, `HP ${selected.hp} · Armor ${selected.armor} · Focus ${selected.focus}`, 14, '#f2d58a'));
     this.layer.add(text(this, 940, 354, selected.weapon, 13, theme.muted).setWordWrapWidth(230));
     this.layer.add(text(this, 940, 402, selected.passive, 12, '#96a3c0').setWordWrapWidth(230));
-    this.drawButton(914, 578, 292, 54, 'Create Run', () => this.createRun(), true);
-    this.drawButton(914, 644, 292, 42, 'Back to Main Menu', () => {
+    this.drawButton(914, 552, 292, 54, 'Create Run', () => this.createRun(), true);
+    this.layer.add(text(this, 940, 622, 'Starting kit becomes your first weapon profile. Loot can improve power, armor, or accuracy during the run.', 12, '#8f9ab4').setWordWrapWidth(236));
+    this.drawButton(914, 684, 292, 42, 'Back to Main Menu', () => {
       this.screen = 'menu';
       this.render();
     });
@@ -352,8 +379,10 @@ class GameScene extends Phaser.Scene {
     this.layer.add(text(this, 238, 330, this.lastRoll || 'Choose how to resolve this stop.', 14, '#cbb783').setWordWrapWidth(760));
 
     if (tile.encounter === 'shop') {
-      this.drawButton(252, 452, 220, 54, 'Buy Herb - 12g', () => this.buyHerb(), true, this.run.gold < 12);
-      this.drawButton(500, 452, 220, 54, 'Leave Shop', () => this.resolveEncounter('You leave the merchant camp.'));
+      this.drawButton(232, 452, 190, 54, 'Buy Herb - 12g', () => this.buyHerb(), true, this.run.gold < 12);
+      this.drawButton(444, 452, 190, 54, 'Buy Bomb - 16g', () => this.buyBomb(), false, this.run.gold < 16);
+      this.drawButton(656, 452, 190, 54, 'Buy Armor - 24g', () => this.buyArmor(), false, this.run.gold < 24);
+      this.drawButton(868, 452, 150, 54, 'Leave', () => this.resolveEncounter('You leave the merchant camp.'));
     } else if (tile.encounter === 'shrine') {
       this.drawButton(252, 452, 220, 54, 'Rest at Shrine', () => this.restShrine(), true);
       this.drawButton(500, 452, 220, 54, 'Move On', () => this.resolveEncounter('You leave the shrine untouched.'));
@@ -467,8 +496,9 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x06080d, 1).fillRoundedRect(x + 24, y + 96, 250, 16, 8);
     g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 96, Math.min(250, this.run.pressure * 25), 16, 8);
     this.layer.add(text(this, x + 24, y + 120, `Pressure ${this.run.pressure}/10`, 11, theme.muted));
-    this.layer.add(text(this, x + 24, y + 148, `${this.hero.name} · HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.hero.armor}`, 13, '#d5c185'));
-    this.layer.add(text(this, x + 24, y + 174, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Score ${this.run.score}`, 12, theme.muted));
+    this.layer.add(text(this, x + 24, y + 148, `${this.hero.name} · HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.totalArmor()}`, 13, '#d5c185'));
+    this.layer.add(text(this, x + 24, y + 174, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Bombs ${this.run.bombs} · Score ${this.run.score}`, 12, theme.muted));
+    this.layer.add(text(this, x + 24, y + 196, `${this.hero.equipment.weaponName}: PWR ${this.hero.equipment.power} · ACC ${this.hero.equipment.accuracy}%`, 11, '#9eaac7'));
   }
 
   private drawBoardHeader() {
@@ -608,21 +638,32 @@ class GameScene extends Phaser.Scene {
     this.drawPanel(x, y, 292, 518, 'Combat State');
     this.layer.add(text(this, x + 24, y + 64, `${this.hero.name} vs ${this.enemy.name}`, 16, theme.ink));
     this.layer.add(text(this, x + 24, y + 96, `Enemy: HP ${this.enemy.hp}/${this.enemy.maxHp} · AR ${this.enemy.armor}`, 13, '#e6a49b'));
-    this.layer.add(text(this, x + 24, y + 126, `Hero: HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.hero.armor}`, 13, '#bde5bf'));
-    this.layer.add(text(this, x + 24, y + 172, 'Combat Log', 12, '#d5c185'));
-    this.combatLog.slice(-8).forEach((line, i) => this.layer.add(text(this, x + 24, y + 202 + i * 30, `• ${line}`, 11, '#aab3c8').setWordWrapWidth(238)));
+    this.layer.add(text(this, x + 24, y + 126, `Hero: HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.totalArmor()}`, 13, '#bde5bf'));
+    this.layer.add(text(this, x + 24, y + 150, `${this.hero.equipment.weaponName}: PWR ${this.hero.equipment.power} · ACC ${this.hero.equipment.accuracy}%`, 11, '#cbb783').setWordWrapWidth(238));
+    this.layer.add(text(this, x + 24, y + 188, 'Combat Log', 12, '#d5c185'));
+    this.combatLog.slice(-7).forEach((line, i) => this.layer.add(text(this, x + 24, y + 216 + i * 30, `• ${line}`, 11, '#aab3c8').setWordWrapWidth(238)));
   }
 
   private drawActionBar(x: number, y: number) {
     this.drawButton(x, y, 150, 48, 'Attack', () => this.playerAttack(), true);
     this.drawButton(x + 168, y, 150, 48, 'Guard', () => this.playerGuard());
     this.drawButton(x + 336, y, 150, 48, 'Use Herb', () => this.useHerb(), false, !this.run || this.run.herbs <= 0);
-    this.drawButton(x + 504, y, 150, 48, 'Flee', () => this.fleeCombat());
+    this.drawButton(x + 504, y, 150, 48, 'Bomb', () => this.useBomb(), false, !this.run || this.run.bombs <= 0);
+    this.drawButton(x + 672, y, 120, 48, 'Flee', () => this.fleeCombat());
   }
 
   private createRun(render = true) {
     const base = this.heroClass(this.selectedHeroId);
-    this.hero = { ...base, maxHp: base.hp, currentHp: base.hp, guarded: false, x: START.x, y: START.y };
+    this.hero = {
+      ...base,
+      maxHp: base.hp,
+      currentHp: base.hp,
+      guarded: false,
+      x: START.x,
+      y: START.y,
+      equipment: this.startingEquipment(base),
+      inventory: [],
+    };
     this.tiles = initialTiles.map((tile) => ({ ...tile, resolved: tile.encounter === 'none' }));
     this.run = {
       day: 1,
@@ -631,6 +672,7 @@ class GameScene extends Phaser.Scene {
       pressure: 0,
       gold: base.id === 'minstrel' ? 30 : 18,
       herbs: base.id === 'herbalist' ? 3 : 2,
+      bombs: 1,
       score: 0,
       log: [`${base.name} leaves Haven alone.`],
     };
@@ -736,6 +778,21 @@ class GameScene extends Phaser.Scene {
     this.resolveEncounter('Bought one herb.');
   }
 
+  private buyBomb() {
+    if (!this.run) return;
+    if (this.run.gold < 16) return;
+    this.run.gold -= 16;
+    this.run.bombs += 1;
+    this.resolveEncounter('Bought one powder bomb.');
+  }
+
+  private buyArmor() {
+    if (!this.hero || !this.run || this.run.gold < 24) return;
+    this.run.gold -= 24;
+    this.hero.equipment.armorBonus += 1;
+    this.resolveEncounter('Bought reinforced plates. Armor increased by 1.');
+  }
+
   private restShrine() {
     if (!this.hero) return;
     const heal = 8;
@@ -791,9 +848,9 @@ class GameScene extends Phaser.Scene {
   private playerAttack() {
     if (!this.hero || !this.enemy) return;
     const roll = Phaser.Math.Between(1, 100);
-    const accuracy = this.hero.id === 'woodcutter' ? 68 : 78;
+    const accuracy = this.attackAccuracy();
     if (roll <= accuracy) {
-      const base = Math.round(this.hero.stats.might / 12 + (this.hero.stats.intellect > 80 ? 3 : 0));
+      const base = Math.round(this.hero.stats.might / 12 + (this.hero.stats.intellect > 80 ? 3 : 0)) + this.hero.equipment.power;
       const damage = Math.max(1, base + Phaser.Math.Between(0, 4) - this.enemy.armor);
       this.enemy.hp -= damage;
       this.combatLog.push(`Hit for ${damage} damage (${roll} vs ${accuracy}).`);
@@ -841,7 +898,7 @@ class GameScene extends Phaser.Scene {
 
   private enemyTurn() {
     if (!this.hero || !this.enemy || !this.run) return;
-    let damage = Math.max(1, this.enemy.damage - this.hero.armor);
+    let damage = Math.max(1, this.enemy.damage - this.totalArmor());
     if (this.hero.guarded) {
       damage = Math.max(0, damage - (this.hero.id === 'blacksmith' ? 6 : 3));
       this.hero.guarded = false;
@@ -860,8 +917,10 @@ class GameScene extends Phaser.Scene {
     if (!this.enemy || !this.run || !this.activeTile) return;
     this.run.gold += this.enemy.rewardGold;
     this.run.score += this.activeTile.encounter === 'boss' ? 100 : 25;
+    const loot = this.rollLoot();
+    if (loot) this.applyLoot(loot);
     this.activeTile.resolved = true;
-    this.addLog(`Defeated ${this.enemy.name}; gained ${this.enemy.rewardGold} gold.`);
+    this.addLog(`Defeated ${this.enemy.name}; gained ${this.enemy.rewardGold} gold${loot ? ` and ${loot.name}` : ''}.`);
     const bossWon = this.activeTile.encounter === 'boss';
     this.enemy = undefined;
     this.screen = bossWon ? 'summary' : 'board';
@@ -880,6 +939,53 @@ class GameScene extends Phaser.Scene {
     if (tile.terrain === 'lava') return { id: 'ashling', name: 'Ashling Brute', hp: 24, maxHp: 24, armor: 2, damage: 8, color: 0xd97145, note: 'Burning', rewardGold: 18 };
     if (tile.terrain === 'ruin') return { id: 'bone', name: 'Bone Archer', hp: 16, maxHp: 16, armor: 1, damage: 6, color: 0xe4e0ca, note: 'Ranged', rewardGold: 12 };
     return { id: 'goblin', name: 'Goblin Guard', hp: 18, maxHp: 18, armor: 1, damage: 6, color: 0xb7d567, note: 'Patrol', rewardGold: 10 };
+  }
+
+  private useBomb() {
+    if (!this.enemy || !this.run || this.run.bombs <= 0) return;
+    this.run.bombs -= 1;
+    const damage = 8;
+    this.enemy.hp -= damage;
+    this.combatLog.push(`Bomb dealt ${damage} direct damage.`);
+    if (this.enemy.hp <= 0) {
+      this.winCombat();
+      return;
+    }
+    this.enemyTurn();
+  }
+
+  private startingEquipment(hero: HeroClass): Equipment {
+    const baseAccuracy = hero.id === 'woodcutter' ? 68 : hero.id === 'hunter' ? 82 : 76;
+    const basePower = hero.id === 'scholar' ? 4 : hero.id === 'woodcutter' ? 8 : hero.id === 'blacksmith' ? 7 : 5;
+    return { weaponName: hero.weapon.split(' + ')[0], power: basePower, accuracy: baseAccuracy, armorBonus: 0 };
+  }
+
+  private attackAccuracy() {
+    if (!this.hero) return 70;
+    return Phaser.Math.Clamp(this.hero.equipment.accuracy, 35, 95);
+  }
+
+  private totalArmor() {
+    if (!this.hero) return 0;
+    return this.hero.armor + this.hero.equipment.armorBonus;
+  }
+
+  private rollLoot() {
+    if (!this.hero) return undefined;
+    const roll = Phaser.Math.Between(1, 100);
+    const chance = 45 + Math.round(this.hero.stats.luck / 5);
+    if (roll > chance) return undefined;
+    return lootTable[Phaser.Math.Between(0, lootTable.length - 1)];
+  }
+
+  private applyLoot(item: LootItem) {
+    if (!this.hero) return;
+    this.hero.inventory.push(item);
+    if (item.power) this.hero.equipment.power += item.power;
+    if (item.accuracy) this.hero.equipment.accuracy += item.accuracy;
+    if (item.armorBonus) this.hero.equipment.armorBonus += item.armorBonus;
+    if (item.kind === 'weapon') this.hero.equipment.weaponName = item.name;
+    this.combatLog.push(`Loot equipped: ${item.name} (${item.description}).`);
   }
 
   private addLog(line: string) {
