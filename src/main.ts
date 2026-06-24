@@ -373,27 +373,42 @@ class GameScene extends Phaser.Scene {
     if (!this.activeTile || !this.hero || !this.run) return;
     const tile = this.activeTile;
     this.layer.add(text(this, 52, 44, 'Encounter', 38, '#f2d58a', 'Georgia, serif'));
-    this.drawPanel(190, 136, 900, 470, tile.label ?? this.encounterTitle(tile.encounter));
+    this.drawPanel(150, 118, 980, 520, tile.label ?? this.encounterTitle(tile.encounter));
     const body = this.drawEncounterBody(tile);
-    this.layer.add(text(this, 238, 212, body, 17, theme.ink).setWordWrapWidth(790));
-    this.layer.add(text(this, 238, 330, this.lastRoll || 'Choose how to resolve this stop.', 14, '#cbb783').setWordWrapWidth(760));
+    this.layer.add(text(this, 198, 188, body, 16, theme.ink).setWordWrapWidth(860));
+    this.layer.add(text(this, 198, 292, this.lastRoll || this.encounterPreview(tile), 14, '#cbb783').setWordWrapWidth(860));
 
     if (tile.encounter === 'shop') {
-      this.drawButton(232, 452, 190, 54, 'Buy Herb - 12g', () => this.buyHerb(), true, this.run.gold < 12);
-      this.drawButton(444, 452, 190, 54, 'Buy Bomb - 16g', () => this.buyBomb(), false, this.run.gold < 16);
-      this.drawButton(656, 452, 190, 54, 'Buy Armor - 24g', () => this.buyArmor(), false, this.run.gold < 24);
-      this.drawButton(868, 452, 150, 54, 'Leave', () => this.resolveEncounter('You leave the merchant camp.'));
+      this.drawEncounterOption(198, 366, 208, 106, 'Buy Herb', '12g · Restore HP during combat. Safe, boring, useful.', () => this.buyHerb(), true, this.run.gold < 12);
+      this.drawEncounterOption(426, 366, 208, 106, 'Buy Bomb', '16g · Direct combat damage. Great for armor or bosses.', () => this.buyBomb(), false, this.run.gold < 16);
+      this.drawEncounterOption(654, 366, 208, 106, 'Buy Armor', '24g · Permanent +1 armor this run.', () => this.buyArmor(), false, this.run.gold < 24);
+      this.drawEncounterOption(882, 366, 178, 106, 'Leave', 'Save gold and keep moving.', () => this.resolveEncounter('You leave the merchant camp.'));
     } else if (tile.encounter === 'shrine') {
-      this.drawButton(252, 452, 220, 54, 'Rest at Shrine', () => this.restShrine(), true);
-      this.drawButton(500, 452, 220, 54, 'Move On', () => this.resolveEncounter('You leave the shrine untouched.'));
+      this.drawEncounterOption(252, 382, 240, 116, 'Rest', 'Guaranteed +8 HP. Resolves the shrine.', () => this.restShrine(), true);
+      this.drawEncounterOption(522, 382, 240, 116, 'Pray', `${Math.round(this.hero.stats.luck)}% luck roll. Success: focus + pressure relief. Failure: pressure rises.`, () => this.prayShrine());
+      this.drawEncounterOption(792, 382, 220, 116, 'Move On', 'Save the shrine for nothing. Resolves it.', () => this.resolveEncounter('You leave the shrine untouched.'));
     } else if (tile.encounter === 'skill') {
-      this.drawButton(252, 452, 220, 54, 'Attempt Check', () => this.skillCheck(), true);
-      this.drawButton(500, 452, 220, 54, 'Spend 1 Focus', () => this.skillCheck(true), false, this.hero.focus <= 0);
+      this.drawEncounterOption(226, 382, 240, 116, 'Attempt Check', `${this.skillTarget()}% target. Success: gold + pressure relief. Failure: 5 damage.`, () => this.skillCheck(), true);
+      this.drawEncounterOption(496, 382, 240, 116, 'Spend Focus', `${this.skillTarget(true)}% target. Costs 1 focus for safer odds.`, () => this.skillCheck(true), false, this.hero.focus <= 0);
+      this.drawEncounterOption(766, 382, 240, 116, 'Force Through', 'No roll. Take 3 damage, gain a small reward, and move on.', () => this.forceHazard());
     } else {
-      this.drawButton(252, 452, 220, 54, 'Fight', () => this.startCombat(tile), true);
-      this.drawButton(500, 452, 220, 54, 'Try to Sneak Past', () => this.trySneak());
+      this.drawEncounterOption(226, 382, 240, 116, 'Fight', 'Start combat normally. Highest reward, highest risk.', () => this.startCombat(tile), true);
+      this.drawEncounterOption(496, 382, 240, 116, 'Sneak Past', `${Math.round(this.sneakTarget())}% target. Success bypasses fight for score. Failure starts combat.`, () => this.trySneak());
+      this.drawEncounterOption(766, 382, 240, 116, 'Set Trap', 'Spend 1 bomb to open combat with 10 direct damage.', () => this.setTrapAmbush(), false, this.run.bombs <= 0);
     }
-    this.drawCompactHeroPanel(770, 440);
+    this.drawCompactHeroPanel(808, 536);
+  }
+
+  private drawEncounterOption(x: number, y: number, w: number, h: number, title: string, description: string, onClick: () => void, primary = false, disabled = false) {
+    const g = this.add.graphics();
+    this.layer.add(g);
+    g.fillStyle(disabled ? 0x111622 : primary ? 0x34291a : 0x141b2a, disabled ? 0.56 : 0.96).fillRoundedRect(x, y, w, h, 14);
+    g.lineStyle(primary ? 2 : 1, disabled ? 0x34394a : primary ? theme.brightGold : 0x46516d, disabled ? 0.45 : 0.95).strokeRoundedRect(x, y, w, h, 14);
+    this.layer.add(text(this, x + 18, y + 16, title, 17, disabled ? '#6d7487' : primary ? '#fff0bf' : theme.ink, 'Georgia, serif'));
+    this.layer.add(text(this, x + 18, y + 44, description, 12, disabled ? '#596174' : theme.muted).setWordWrapWidth(w - 34));
+    const zone = this.add.zone(x, y, w, h).setOrigin(0).setInteractive({ useHandCursor: !disabled });
+    if (!disabled) zone.on('pointerdown', onClick);
+    this.layer.add(zone);
   }
 
   private drawCombatScreen() {
@@ -579,6 +594,15 @@ class GameScene extends Phaser.Scene {
 
   private poiColor(kind: EncounterKind) {
     return kind === 'shop' ? theme.blue : kind === 'shrine' ? theme.green : kind === 'skill' ? theme.gold : theme.red;
+  }
+
+  private encounterPreview(tile: BoardTile) {
+    if (!this.hero || !this.run) return 'Choose how to resolve this stop.';
+    if (tile.encounter === 'shop') return `You have ${this.run.gold} gold. Spend for safety, damage, or long-term armor.`;
+    if (tile.encounter === 'shrine') return `Rest is guaranteed. Prayer is a ${this.hero.stats.luck}% luck roll with pressure upside/downside.`;
+    if (tile.encounter === 'skill') return `Best check target: ${this.skillTarget()}%. Spend focus target: ${this.skillTarget(true)}%.`;
+    if (tile.encounter === 'boss') return `Boss ahead. Fight, sneak is unlikely but possible (${Math.round(this.sneakTarget())}%), or spend a bomb to soften it.`;
+    return `Ambush choices: fight, sneak (${Math.round(this.sneakTarget())}%), or spend a bomb to start ahead.`;
   }
 
   private drawEncounterBody(tile: BoardTile) {
@@ -800,13 +824,57 @@ class GameScene extends Phaser.Scene {
     this.resolveEncounter(`The shrine restores ${heal} HP.`);
   }
 
-  private skillCheck(spendFocus = false) {
-    if (!this.hero || !this.run || !this.activeTile) return;
+  private prayShrine() {
+    if (!this.hero || !this.run) return;
+    const roll = Phaser.Math.Between(1, 100);
+    const target = this.hero.stats.luck;
+    if (roll <= target) {
+      this.hero.focus += 1;
+      this.run.pressure = Math.max(0, this.run.pressure - 1);
+      this.resolveEncounter(`Prayer succeeded (${roll} vs ${target}). Focus +1 and pressure reduced.`);
+    } else {
+      this.run.pressure = Math.min(10, this.run.pressure + 1);
+      this.resolveEncounter(`Prayer failed (${roll} vs ${target}). Pressure rises.`);
+    }
+  }
+
+  private forceHazard() {
+    if (!this.hero || !this.run) return;
+    this.hero.currentHp -= 3;
+    this.run.gold += 4;
+    this.run.score += 6;
+    if (this.hero.currentHp <= 0) {
+      this.hero.currentHp = 0;
+      this.screen = 'summary';
+      this.render();
+      return;
+    }
+    this.resolveEncounter('Forced through the hazard: took 3 damage, gained 4 gold.');
+  }
+
+  private setTrapAmbush() {
+    if (!this.run || !this.activeTile || this.run.bombs <= 0) return;
+    this.run.bombs -= 1;
+    this.startCombat(this.activeTile, 10);
+  }
+
+  private skillTarget(spendFocus = false) {
+    if (!this.hero || !this.run) return 50;
     const stat = Math.max(this.hero.stats.awareness, this.hero.stats.intellect, this.hero.stats.luck);
     const bonus = spendFocus && this.hero.focus > 0 ? 20 : 0;
+    return Math.min(95, Math.max(15, stat + bonus - this.run.pressure * 2));
+  }
+
+  private sneakTarget() {
+    if (!this.hero) return 40;
+    return Math.min(85, Math.max(15, this.hero.stats.awareness * 0.55 + this.hero.stats.luck * 0.35 + (this.hero.id === 'minstrel' ? 10 : 0)));
+  }
+
+  private skillCheck(spendFocus = false) {
+    if (!this.hero || !this.run || !this.activeTile) return;
     if (spendFocus) this.hero.focus -= 1;
     const roll = Phaser.Math.Between(1, 100);
-    const target = Math.min(95, stat + bonus - this.run.pressure * 2);
+    const target = this.skillTarget(spendFocus);
     const success = roll <= target;
     this.lastRoll = `Rolled ${roll} vs ${target}${spendFocus ? ' after spending focus' : ''}.`;
     if (success) {
@@ -825,7 +893,7 @@ class GameScene extends Phaser.Scene {
   private trySneak() {
     if (!this.hero || !this.run || !this.activeTile) return;
     const roll = Phaser.Math.Between(1, 100);
-    const target = Math.min(85, this.hero.stats.awareness * 0.55 + this.hero.stats.luck * 0.35 + (this.hero.id === 'minstrel' ? 10 : 0));
+    const target = this.sneakTarget();
     if (roll <= target) {
       this.resolveEncounter(`Sneak succeeded (${roll} vs ${Math.round(target)}). Encounter bypassed.`);
       this.run.score += 8;
@@ -835,12 +903,14 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  private startCombat(tile: BoardTile) {
+  private startCombat(tile: BoardTile, openingDamage = 0) {
     if (!this.hero || !this.run) return;
     this.activeTile = tile;
     this.enemy = this.enemyFor(tile);
     if (this.hero.id === 'hunter' && tile.encounter === 'ambush') this.enemy.hp = Math.max(1, this.enemy.hp - 3);
+    if (openingDamage > 0) this.enemy.hp = Math.max(1, this.enemy.hp - openingDamage);
     this.combatLog = [`${this.enemy.name} engages ${this.hero.name}.`];
+    if (openingDamage > 0) this.combatLog.push(`Trap opens for ${openingDamage} direct damage.`);
     this.screen = 'combat';
     this.render();
   }
