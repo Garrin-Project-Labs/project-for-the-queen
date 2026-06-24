@@ -55,6 +55,8 @@ type BoardTile = {
   label?: string;
   encounter: EncounterKind;
   resolved?: boolean;
+  discovered?: boolean;
+  depth: number;
 };
 
 type Enemy = {
@@ -73,11 +75,12 @@ type RunState = {
   day: number;
   turn: number;
   movesLeft: number;
-  pressure: number;
+  danger: number;
   gold: number;
   herbs: number;
   bombs: number;
   score: number;
+  quest: string;
   log: string[];
 };
 
@@ -124,7 +127,7 @@ const heroClasses: HeroClass[] = [
     id: 'hunter',
     name: 'Hunter',
     archetype: 'Ranged Scout',
-    role: 'High awareness, turn tempo, back-row pressure',
+    role: 'High awareness, turn tempo, back-row danger',
     quote: 'Finds the path before the path finds you.',
     color: 0x64c36b,
     accent: 0xbaf0a5,
@@ -207,28 +210,7 @@ const terrainPalette: Record<Terrain, { top: number; side: number; stroke: numbe
   lava: { top: 0xaa3c2c, side: 0x682019, stroke: 0x2f0f0c, icon: '!', moveCost: 2 },
 };
 
-const initialTiles: BoardTile[] = [
-  { q: 0, r: 0, terrain: 'town', label: 'Haven', encounter: 'none' },
-  { q: 1, r: 0, terrain: 'road', encounter: 'none' },
-  { q: 2, r: 0, terrain: 'forest', label: 'Snarewood', encounter: 'ambush' },
-  { q: 3, r: 0, terrain: 'ruin', label: 'Watchtower', encounter: 'skill' },
-  { q: 4, r: 0, terrain: 'mountain', encounter: 'none' },
-  { q: 0, r: 1, terrain: 'forest', encounter: 'shrine' },
-  { q: 1, r: 1, terrain: 'road', encounter: 'none' },
-  { q: 2, r: 1, terrain: 'swamp', label: 'Rot Fen', encounter: 'skill' },
-  { q: 3, r: 1, terrain: 'forest', encounter: 'ambush' },
-  { q: 4, r: 1, terrain: 'ruin', encounter: 'none' },
-  { q: 0, r: 2, terrain: 'swamp', encounter: 'none' },
-  { q: 1, r: 2, terrain: 'road', label: 'Merchant', encounter: 'shop' },
-  { q: 2, r: 2, terrain: 'road', encounter: 'none' },
-  { q: 3, r: 2, terrain: 'lava', label: 'Ash Pit', encounter: 'ambush' },
-  { q: 4, r: 2, terrain: 'mountain', label: 'Mine Gate', encounter: 'skill' },
-  { q: 0, r: 3, terrain: 'forest', encounter: 'none' },
-  { q: 1, r: 3, terrain: 'ruin', encounter: 'ambush' },
-  { q: 2, r: 3, terrain: 'road', encounter: 'none' },
-  { q: 3, r: 3, terrain: 'mountain', encounter: 'none' },
-  { q: 4, r: 3, terrain: 'lava', label: 'Tyrant Captain', encounter: 'boss' },
-];
+const landmarkNames = ['Old Cairn', 'Glass Fen', 'Crow Market', 'Broken Spire', 'Wolf Road', 'Ash Shrine', 'Salt Watch', 'Moon Gate'];
 
 const lootTable: LootItem[] = [
   { name: 'Mercenary Saber', kind: 'weapon', power: 2, accuracy: 4, description: '+2 power, +4% accuracy' },
@@ -248,7 +230,7 @@ class GameScene extends Phaser.Scene {
   private enemy?: Enemy;
   private combatLog: string[] = [];
   private lastRoll = '';
-  private boardNotice = 'Reachable tiles glow gold. Click a neighboring tile to spend movement.';
+  private boardNotice = 'Map grows as you explore. Reachable tiles glow gold.';
   private isMoving = false;
   private heroToken?: Phaser.GameObjects.Container;
 
@@ -299,10 +281,10 @@ class GameScene extends Phaser.Scene {
   private drawMainMenu() {
     this.drawOrnament(640, 88, 540);
     this.layer.add(text(this, 640, 104, 'FOR THE QUEEN', 58, theme.ink, 'Georgia, serif').setOrigin(0.5));
-    this.layer.add(text(this, 640, 158, 'single-hero tabletop tactics run', 18, '#b9a370').setOrigin(0.5));
+    this.layer.add(text(this, 640, 158, 'single-hero exploration tactics run', 18, '#b9a370').setOrigin(0.5));
     this.drawMiniBoardPreview(142, 224);
     this.drawPanel(708, 218, 394, 286, 'Current Playable Loop');
-    ['Pick and control one hero', 'Create a fresh run', 'Spend movement points on the board', 'Trigger shops, shrines, skill checks, ambushes', 'Resolve turn-based combat', 'Win by defeating the Tyrant Captain'].forEach((item, i) => {
+    ['Pick and control one hero', 'Create a fresh run', 'Spend movement points on the board', 'Trigger shops, shrines, skill checks, ambushes', 'Resolve turn-based combat', 'Explore outward, find quests, defeat harder fights'].forEach((item, i) => {
       this.layer.add(text(this, 742, 270 + i * 32, `✦ ${item}`, 15, i === 0 ? '#f2d58a' : theme.muted));
     });
     this.drawButton(498, 532, 284, 58, 'New Run', () => {
@@ -385,10 +367,10 @@ class GameScene extends Phaser.Scene {
       this.drawEncounterOption(882, 366, 178, 106, 'Leave', 'Save gold and keep moving.', () => this.resolveEncounter('You leave the merchant camp.'));
     } else if (tile.encounter === 'shrine') {
       this.drawEncounterOption(252, 382, 240, 116, 'Rest', 'Guaranteed +8 HP. Resolves the shrine.', () => this.restShrine(), true);
-      this.drawEncounterOption(522, 382, 240, 116, 'Pray', `${Math.round(this.hero.stats.luck)}% luck roll. Success: focus + pressure relief. Failure: pressure rises.`, () => this.prayShrine());
+      this.drawEncounterOption(522, 382, 240, 116, 'Pray', `${Math.round(this.hero.stats.luck)}% luck roll. Success: focus + danger relief. Failure: danger rises.`, () => this.prayShrine());
       this.drawEncounterOption(792, 382, 220, 116, 'Move On', 'Save the shrine for nothing. Resolves it.', () => this.resolveEncounter('You leave the shrine untouched.'));
     } else if (tile.encounter === 'skill') {
-      this.drawEncounterOption(226, 382, 240, 116, 'Attempt Check', `${this.skillTarget()}% target. Success: gold + pressure relief. Failure: 5 damage.`, () => this.skillCheck(), true);
+      this.drawEncounterOption(226, 382, 240, 116, 'Attempt Check', `${this.skillTarget()}% target. Success: gold + danger relief. Failure: 5 damage.`, () => this.skillCheck(), true);
       this.drawEncounterOption(496, 382, 240, 116, 'Spend Focus', `${this.skillTarget(true)}% target. Costs 1 focus for safer odds.`, () => this.skillCheck(true), false, this.hero.focus <= 0);
       this.drawEncounterOption(766, 382, 240, 116, 'Force Through', 'No roll. Take 3 damage, gain a small reward, and move on.', () => this.forceHazard());
     } else {
@@ -440,13 +422,13 @@ class GameScene extends Phaser.Scene {
     g.fillStyle(0x05070d, 0.48).fillEllipse(622, 494, 940, 250);
     g.fillStyle(0x111b2b, 0.48).fillEllipse(610, 358, 760, 230);
     this.drawBoardPath();
-    this.tiles.forEach((tile) => this.drawIsoTile(tile));
+    [...this.tiles].sort((a, b) => (a.q + a.r) - (b.q + b.r)).forEach((tile) => this.drawIsoTile(tile));
     this.drawBoardEvents();
     if (this.hero) this.drawHeroToken(this.hero);
   }
 
   private drawIsoTile(tile: BoardTile) {
-    const p = boardPoint(tile.q, tile.r);
+    const p = this.boardPoint(tile.q, tile.r);
     const palette = terrainPalette[tile.terrain];
     const g = this.add.graphics();
     this.layer.add(g);
@@ -477,19 +459,19 @@ class GameScene extends Phaser.Scene {
     const g = this.add.graphics();
     this.layer.add(g);
     g.lineStyle(5, theme.gold, 0.3);
-    const route = [boardPoint(0, 0), boardPoint(1, 1), boardPoint(2, 2), boardPoint(3, 3), boardPoint(4, 3)];
+    const route = [this.boardPoint(0, 0), this.boardPoint(1, 1), this.boardPoint(2, 2), this.boardPoint(3, 3), this.boardPoint(4, 3)];
     for (let i = 0; i < route.length - 1; i++) g.lineBetween(route[i].x, route[i].y, route[i + 1].x, route[i + 1].y);
   }
 
   private drawBoardEvents() {
     this.tiles.filter((tile) => tile.encounter !== 'none' && !tile.resolved).forEach((tile) => {
-      const p = boardPoint(tile.q, tile.r);
+      const p = this.boardPoint(tile.q, tile.r);
       this.drawPoiMarker(tile, p.x, p.y);
     });
   }
 
   private drawHeroToken(hero: PlayerHero) {
-    const p = boardPoint(hero.x, hero.y);
+    const p = this.boardPoint(hero.x, hero.y);
     const token = this.add.container(p.x, p.y);
     const g = this.add.graphics();
     g.fillStyle(0x000000, 0.45).fillEllipse(0, -2, 48, 16);
@@ -504,16 +486,17 @@ class GameScene extends Phaser.Scene {
 
   private drawRunPanel(x: number, y: number) {
     if (!this.hero || !this.run) return;
-    this.drawPanel(x, y, 306, 214, 'Run State');
+    this.drawPanel(x, y, 306, 248, 'Run State');
     this.layer.add(text(this, x + 24, y + 62, `Day ${this.run.day} · Turn ${this.run.turn} · Moves ${this.run.movesLeft}`, 15, theme.ink));
     const g = this.add.graphics();
     this.layer.add(g);
     g.fillStyle(0x06080d, 1).fillRoundedRect(x + 24, y + 96, 250, 16, 8);
-    g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 96, Math.min(250, this.run.pressure * 25), 16, 8);
-    this.layer.add(text(this, x + 24, y + 120, `Pressure ${this.run.pressure}/10`, 11, theme.muted));
+    g.fillStyle(theme.red, 1).fillRoundedRect(x + 24, y + 96, Math.min(250, this.run.danger * 25), 16, 8);
+    this.layer.add(text(this, x + 24, y + 120, `Depth ${this.heroDepth()} · Danger tier ${this.run.danger}/10`, 11, theme.muted));
     this.layer.add(text(this, x + 24, y + 148, `${this.hero.name} · HP ${this.hero.currentHp}/${this.hero.maxHp} · AR ${this.totalArmor()}`, 13, '#d5c185'));
     this.layer.add(text(this, x + 24, y + 174, `Gold ${this.run.gold} · Herbs ${this.run.herbs} · Bombs ${this.run.bombs} · Score ${this.run.score}`, 12, theme.muted));
     this.layer.add(text(this, x + 24, y + 196, `${this.hero.equipment.weaponName}: PWR ${this.hero.equipment.power} · ACC ${this.hero.equipment.accuracy}%`, 11, '#9eaac7'));
+    this.layer.add(text(this, x + 24, y + 218, this.run.quest, 10, '#cbb783').setWordWrapWidth(250));
   }
 
   private drawBoardHeader() {
@@ -537,7 +520,7 @@ class GameScene extends Phaser.Scene {
       this.drawPoiGlyph(kind, xx, y + 30, 0.8);
       this.layer.add(text(this, xx + 20, y + 22, label, 12, theme.muted));
     });
-    this.layer.add(text(this, x + 598, y + 14, 'Gold outlines = reachable now. Terrain costs 1-2 movement.', 12, '#cbb783').setWordWrapWidth(206));
+    this.layer.add(text(this, x + 598, y + 14, 'Gold outlines = reachable. New tiles appear as you travel.', 12, '#cbb783').setWordWrapWidth(206));
   }
 
   private drawLocationLabel(tile: BoardTile, x: number, y: number) {
@@ -599,7 +582,7 @@ class GameScene extends Phaser.Scene {
   private encounterPreview(tile: BoardTile) {
     if (!this.hero || !this.run) return 'Choose how to resolve this stop.';
     if (tile.encounter === 'shop') return `You have ${this.run.gold} gold. Spend for safety, damage, or long-term armor.`;
-    if (tile.encounter === 'shrine') return `Rest is guaranteed. Prayer is a ${this.hero.stats.luck}% luck roll with pressure upside/downside.`;
+    if (tile.encounter === 'shrine') return `Rest is guaranteed. Prayer is a ${this.hero.stats.luck}% luck roll with danger-tier upside/downside.`;
     if (tile.encounter === 'skill') return `Best check target: ${this.skillTarget()}%. Spend focus target: ${this.skillTarget(true)}%.`;
     if (tile.encounter === 'boss') return `Boss ahead. Fight, sneak is unlikely but possible (${Math.round(this.sneakTarget())}%), or spend a bomb to soften it.`;
     return `Ambush choices: fight, sneak (${Math.round(this.sneakTarget())}%), or spend a bomb to start ahead.`;
@@ -688,18 +671,20 @@ class GameScene extends Phaser.Scene {
       equipment: this.startingEquipment(base),
       inventory: [],
     };
-    this.tiles = initialTiles.map((tile) => ({ ...tile, resolved: tile.encounter === 'none' }));
+    this.tiles = [];
     this.run = {
       day: 1,
       turn: 1,
       movesLeft: 3,
-      pressure: 0,
+      danger: 0,
       gold: base.id === 'minstrel' ? 30 : 18,
       herbs: base.id === 'herbalist' ? 3 : 2,
       bombs: 1,
       score: 0,
+      quest: 'Explore the wilds and defeat the Captain at depth 5.',
       log: [`${base.name} leaves Haven alone.`],
     };
+    this.revealAround(START.x, START.y);
     this.activeTile = undefined;
     this.enemy = undefined;
     this.combatLog = [];
@@ -717,8 +702,8 @@ class GameScene extends Phaser.Scene {
       return;
     }
 
-    const from = boardPoint(this.hero.x, this.hero.y);
-    const to = boardPoint(tile.q, tile.r);
+    const from = this.boardPoint(this.hero.x, this.hero.y);
+    const to = this.boardPoint(tile.q, tile.r);
     this.run.movesLeft -= cost;
     this.boardNotice = `Travelling to ${tile.label ?? tile.terrain}...`;
     this.addLog(`Moved to ${tile.label ?? tile.terrain} (-${cost} move).`);
@@ -754,6 +739,7 @@ class GameScene extends Phaser.Scene {
     if (!this.hero || !this.run) return;
     this.hero.x = tile.q;
     this.hero.y = tile.r;
+    this.revealAround(tile.q, tile.r);
     this.isMoving = false;
     this.boardNotice = `Arrived at ${tile.label ?? tile.terrain}. ${this.run.movesLeft} movement remaining.`;
     if (tile.encounter !== 'none' && !tile.resolved) {
@@ -776,20 +762,9 @@ class GameScene extends Phaser.Scene {
     this.run.turn += 1;
     if (this.run.turn % 3 === 1) this.run.day += 1;
     this.run.movesLeft = 3 + (this.hero.stats.speed >= 75 ? 1 : 0);
-    this.run.pressure = Math.min(10, this.run.pressure + 1);
-    this.boardNotice = 'New turn. Movement refreshed; pressure rises.';
-    if (this.run.pressure >= 10) {
-      const damage = 3;
-      this.hero.currentHp -= damage;
-      this.addLog(`Pressure bites: ${damage} damage from spreading patrols.`);
-      if (this.hero.currentHp <= 0) {
-        this.screen = 'summary';
-        this.render();
-        return;
-      }
-    } else {
-      this.addLog('Turn ended. Movement refreshed; pressure rises.');
-    }
+    this.run.danger = Math.min(10, Math.max(this.run.danger, this.heroDepth()));
+    this.boardNotice = 'New turn. Movement refreshed. Danger now comes from travelling deeper, not passive damage.';
+    this.addLog('Turn ended. Movement refreshed. Explore deeper to find harder content.');
     this.screen = 'board';
     this.render();
   }
@@ -830,11 +805,11 @@ class GameScene extends Phaser.Scene {
     const target = this.hero.stats.luck;
     if (roll <= target) {
       this.hero.focus += 1;
-      this.run.pressure = Math.max(0, this.run.pressure - 1);
-      this.resolveEncounter(`Prayer succeeded (${roll} vs ${target}). Focus +1 and pressure reduced.`);
+      this.run.danger = Math.max(0, this.run.danger - 1);
+      this.resolveEncounter(`Prayer succeeded (${roll} vs ${target}). Focus +1 and danger reduced.`);
     } else {
-      this.run.pressure = Math.min(10, this.run.pressure + 1);
-      this.resolveEncounter(`Prayer failed (${roll} vs ${target}). Pressure rises.`);
+      this.run.danger = Math.min(10, this.run.danger + 1);
+      this.resolveEncounter(`Prayer failed (${roll} vs ${target}). Danger rises.`);
     }
   }
 
@@ -862,7 +837,7 @@ class GameScene extends Phaser.Scene {
     if (!this.hero || !this.run) return 50;
     const stat = Math.max(this.hero.stats.awareness, this.hero.stats.intellect, this.hero.stats.luck);
     const bonus = spendFocus && this.hero.focus > 0 ? 20 : 0;
-    return Math.min(95, Math.max(15, stat + bonus - this.run.pressure * 2));
+    return Math.min(95, Math.max(15, stat + bonus));
   }
 
   private sneakTarget() {
@@ -880,8 +855,8 @@ class GameScene extends Phaser.Scene {
     if (success) {
       this.run.gold += 10;
       this.run.score += 15;
-      this.resolveEncounter(`${this.lastRoll} Success: gained 10 gold and reduced pressure.`);
-      this.run.pressure = Math.max(0, this.run.pressure - 1);
+      this.resolveEncounter(`${this.lastRoll} Success: gained 10 gold and reduced danger.`);
+      this.run.danger = Math.max(0, this.run.danger - 1);
     } else {
       const damage = 5;
       this.hero.currentHp -= damage;
@@ -1004,13 +979,6 @@ class GameScene extends Phaser.Scene {
     this.render();
   }
 
-  private enemyFor(tile: BoardTile): Enemy {
-    if (tile.encounter === 'boss') return { id: 'captain', name: 'Tyrant Captain', hp: 34, maxHp: 34, armor: 3, damage: 9, color: 0xc94c3f, note: 'Boss', rewardGold: 35 };
-    if (tile.terrain === 'lava') return { id: 'ashling', name: 'Ashling Brute', hp: 24, maxHp: 24, armor: 2, damage: 8, color: 0xd97145, note: 'Burning', rewardGold: 18 };
-    if (tile.terrain === 'ruin') return { id: 'bone', name: 'Bone Archer', hp: 16, maxHp: 16, armor: 1, damage: 6, color: 0xe4e0ca, note: 'Ranged', rewardGold: 12 };
-    return { id: 'goblin', name: 'Goblin Guard', hp: 18, maxHp: 18, armor: 1, damage: 6, color: 0xb7d567, note: 'Patrol', rewardGold: 10 };
-  }
-
   private useBomb() {
     if (!this.enemy || !this.run || this.run.bombs <= 0) return;
     this.run.bombs -= 1;
@@ -1056,6 +1024,73 @@ class GameScene extends Phaser.Scene {
     if (item.armorBonus) this.hero.equipment.armorBonus += item.armorBonus;
     if (item.kind === 'weapon') this.hero.equipment.weaponName = item.name;
     this.combatLog.push(`Loot equipped: ${item.name} (${item.description}).`);
+  }
+
+  private enemyFor(tile: BoardTile): Enemy {
+    const tier = Math.max(0, tile.depth - 1);
+    const scaleEnemy = (enemy: Enemy): Enemy => ({
+      ...enemy,
+      hp: enemy.hp + tier * 3,
+      maxHp: enemy.maxHp + tier * 3,
+      armor: enemy.armor + Math.floor(tier / 3),
+      damage: enemy.damage + Math.floor(tier / 2),
+      rewardGold: enemy.rewardGold + tier * 3,
+      note: `${enemy.note} · depth ${tile.depth}`,
+    });
+    if (tile.encounter === 'boss') return scaleEnemy({ id: 'captain', name: 'Tyrant Captain', hp: 34, maxHp: 34, armor: 3, damage: 9, color: 0xc94c3f, note: 'Quest Boss', rewardGold: 35 });
+    if (tile.terrain === 'lava') return scaleEnemy({ id: 'ashling', name: 'Ashling Brute', hp: 24, maxHp: 24, armor: 2, damage: 8, color: 0xd97145, note: 'Burning', rewardGold: 18 });
+    if (tile.terrain === 'ruin') return scaleEnemy({ id: 'bone', name: 'Bone Archer', hp: 16, maxHp: 16, armor: 1, damage: 6, color: 0xe4e0ca, note: 'Ranged', rewardGold: 12 });
+    return scaleEnemy({ id: 'goblin', name: 'Goblin Guard', hp: 18, maxHp: 18, armor: 1, damage: 6, color: 0xb7d567, note: 'Patrol', rewardGold: 10 });
+  }
+
+  private revealAround(q: number, r: number) {
+    for (let dq = -1; dq <= 1; dq++) {
+      for (let dr = -1; dr <= 1; dr++) {
+        if (Math.abs(dq - dr) > 1) continue;
+        this.ensureTile(q + dq, r + dr);
+      }
+    }
+  }
+
+  private ensureTile(q: number, r: number) {
+    const existing = this.tiles.find((tile) => tile.q === q && tile.r === r);
+    if (existing) {
+      existing.discovered = true;
+      return existing;
+    }
+    const tile = this.generateTile(q, r);
+    this.tiles.push(tile);
+    return tile;
+  }
+
+  private generateTile(q: number, r: number): BoardTile {
+    const depth = hexDistance(q, r);
+    if (q === 0 && r === 0) return { q, r, depth, terrain: 'town', label: 'Haven', encounter: 'none', resolved: true, discovered: true };
+    if (q === 5 && r === 3) return { q, r, depth, terrain: 'lava', label: 'Tyrant Captain', encounter: 'boss', resolved: false, discovered: true };
+    const h = hashCoord(q, r);
+    const terrainRoll = h % 100;
+    const terrain: Terrain = terrainRoll < 26 ? 'road' : terrainRoll < 46 ? 'forest' : terrainRoll < 60 ? 'swamp' : terrainRoll < 74 ? 'ruin' : terrainRoll < 88 ? 'mountain' : 'lava';
+    let encounter: EncounterKind = 'none';
+    if (depth > 0) {
+      const encounterRoll = Math.floor(h / 100) % 100;
+      if (encounterRoll < 14) encounter = 'shop';
+      else if (encounterRoll < 26) encounter = 'shrine';
+      else if (encounterRoll < 48) encounter = 'skill';
+      else if (encounterRoll < 76) encounter = 'ambush';
+    }
+    const label = encounter !== 'none' && (h % 3 === 0 || encounter === 'shop') ? landmarkNames[h % landmarkNames.length] : undefined;
+    return { q, r, depth, terrain, label, encounter, resolved: encounter === 'none', discovered: true };
+  }
+
+  private heroDepth() {
+    if (!this.hero) return 0;
+    return hexDistance(this.hero.x, this.hero.y);
+  }
+
+  private boardPoint(q: number, r: number) {
+    const centerQ = this.hero?.x ?? 0;
+    const centerR = this.hero?.y ?? 0;
+    return iso(q - centerQ, r - centerR, BOARD_ORIGIN.x, BOARD_ORIGIN.y + 218);
   }
 
   private addLog(line: string) {
@@ -1147,6 +1182,16 @@ function combatIso(row: number, col: number) {
 
 function diamond(x: number, y: number, w = TILE_W, h = TILE_H) {
   return [new Phaser.Math.Vector2(x, y - h / 2), new Phaser.Math.Vector2(x + w / 2, y), new Phaser.Math.Vector2(x, y + h / 2), new Phaser.Math.Vector2(x - w / 2, y)];
+}
+
+function hashCoord(q: number, r: number) {
+  let n = Math.imul(q + 1013, 374761393) ^ Math.imul(r - 9176, 668265263);
+  n = (n ^ (n >>> 13)) >>> 0;
+  return Math.imul(n, 1274126177) >>> 0;
+}
+
+function hexDistance(q: number, r: number) {
+  return Math.max(Math.abs(q), Math.abs(r), Math.abs(q - r));
 }
 
 function numberToHex(value: number) {
